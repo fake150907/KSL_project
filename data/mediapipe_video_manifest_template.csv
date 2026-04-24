@@ -1,0 +1,2 @@
+sample_id,label,video_path,start,end,duration,split
+NIA_SL_WORD0000_REAL01_D,감사,data/raw/videos/NIA_SL_WORD0000_REAL01_D.mp4,0.0,2.0,4.0,train

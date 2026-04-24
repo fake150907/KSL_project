@@ -1,0 +1,68 @@
+# Streamlit 실행 메모
+
+## 현재 확인된 실행 환경
+
+- 프로젝트 경로: `C:\github\ai-project-01`
+- 실행 파이썬: `C:\Users\Samsung\anaconda3\envs\gesture-test\python.exe`
+- 실행 파일: `src/ui/app.py`
+- 보조 실행 스크립트: `scripts/run_streamlit_ui.ps1`
+
+기본 `python` (`C:\Python314\python.exe`) 에는 `streamlit`가 없어서 실행하면 안 된다.
+
+## 권장 실행 명령
+
+```powershell
+& 'C:\Program Files\PowerShell\7\pwsh.exe' -File 'C:\github\ai-project-01\scripts\run_streamlit_ui.ps1'
+```
+
+또는 직접 실행:
+
+```powershell
+C:\Users\Samsung\anaconda3\envs\gesture-test\python.exe -m streamlit run C:\github\ai-project-01\src\ui\app.py --server.address=0.0.0.0 --server.headless=true --server.port=8501
+```
+
+## 접속 주소
+
+- PC 브라우저: `http://localhost:8501`
+- 같은 와이파이의 휴대폰: `http://192.168.0.108:8501`
+
+휴대폰 접속을 위해서는 반드시 `--server.address=0.0.0.0` 로 실행해야 한다.
+
+## 이미 확인된 함정
+
+- `python -m streamlit ...` 를 기본 파이썬으로 실행하면 `No module named streamlit` 오류가 난다.
+- 이 환경에서는 Codex가 백그라운드로 분리 실행하면 서버 프로세스가 바로 죽거나 포트 바인딩 확인이 불안정했다.
+- 반면 `gesture-test` 환경에서 포그라운드 실행은 정상적으로 `localhost:8501` 을 띄우는 것을 확인했다.
+- 따라서 서버가 안 뜨면 먼저 `gesture-test` 환경인지 확인한다.
+- 휴대폰에서 접속 안 되면 `localhost` 가 아니라 PC 실제 IP로 접속해야 한다.
+
+## UI 동작 관련 현재 상태
+
+- 현재 실시간 인식 가능한 수어 라벨은 8개:
+  - `가다`
+  - `감사`
+  - `괜찮다`
+  - `배고프다`
+  - `병원`
+  - `아프다`
+  - `우유`
+  - `자다`
+- 자동 텍스트 반영은 `st.fragment(run_every="1s")` 기반으로 갱신되도록 수정해 둔 상태다.
+- 휴대폰 카메라가 끊기면 다음 설정부터 먼저 본다:
+  - `실시간 모델`: `baseline`
+  - `실시간 신뢰도 기준`: `0.35`
+  - `프레임 간격`: `2`
+  - `인식 시작 프레임 수`: `12`
+  - `같은 예측 반복 최소 횟수`: `1`
+  - `포즈 선 그리기`: 끔
+  - `손 선 그리기`: 켬
+
+## 다음에 먼저 확인할 체크리스트
+
+1. `gesture-test` 환경으로 실행했는가
+2. `0.0.0.0:8501` 로 열었는가
+3. PC에서는 `localhost:8501`, 휴대폰에서는 `192.168.0.108:8501` 로 접속했는가
+4. 카메라 화면이 보이는가
+5. `수집 프레임` 이 증가하는가
+6. `실시간 수어 후보` 가 바뀌는가
+7. 후보가 바뀌는데 텍스트가 안 들어가면 자동 반영 로직부터 다시 본다
