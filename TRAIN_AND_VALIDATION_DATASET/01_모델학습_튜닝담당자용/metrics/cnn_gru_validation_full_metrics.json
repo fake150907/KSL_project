@@ -1,0 +1,91 @@
+{
+  "name": "cnn_gru_validation_full",
+  "checkpoint": "outputs\\checkpoints_FILE01_16_FULL_cnn_gru\\sequence_model.pt",
+  "npz": "team_handover_outputs\\VALIDATION_MVP_FULL\\mediapipe_npz_VALIDATION_MVP_FULL.npz",
+  "samples": 150,
+  "accuracy": 0.7933333333333333,
+  "model_labels": [
+    "가다",
+    "감사",
+    "괜찮다",
+    "배고프다",
+    "병원",
+    "아프다",
+    "우유",
+    "자다"
+  ],
+  "npz_labels": [
+    "가다",
+    "감사",
+    "괜찮다",
+    "배고프다",
+    "병원",
+    "아프다",
+    "우유",
+    "자다"
+  ],
+  "classification_report": {
+    "가다": {
+      "precision": 0.7222222222222222,
+      "recall": 0.975,
+      "f1-score": 0.8297872340425532,
+      "support": 40.0
+    },
+    "감사": {
+      "precision": 1.0,
+      "recall": 0.5,
+      "f1-score": 0.6666666666666666,
+      "support": 10.0
+    },
+    "괜찮다": {
+      "precision": 0.75,
+      "recall": 0.6,
+      "f1-score": 0.6666666666666665,
+      "support": 10.0
+    },
+    "배고프다": {
+      "precision": 0.8666666666666667,
+      "recall": 0.65,
+      "f1-score": 0.7428571428571429,
+      "support": 20.0
+    },
+    "병원": {
+      "precision": 0.5555555555555556,
+      "recall": 1.0,
+      "f1-score": 0.7142857142857143,
+      "support": 10.0
+    },
+    "아프다": {
+      "precision": 0.6666666666666666,
+      "recall": 0.6,
+      "f1-score": 0.631578947368421,
+      "support": 10.0
+    },
+    "우유": {
+      "precision": 0.9166666666666666,
+      "recall": 0.55,
+      "f1-score": 0.6874999999999999,
+      "support": 20.0
+    },
+    "자다": {
+      "precision": 1.0,
+      "recall": 0.9666666666666667,
+      "f1-score": 0.983050847457627,
+      "support": 30.0
+    },
+    "accuracy": 0.7933333333333333,
+    "macro avg": {
+      "precision": 0.8097222222222222,
+      "recall": 0.7302083333333333,
+      "f1-score": 0.7402991524180988,
+      "support": 150.0
+    },
+    "weighted avg": {
+      "precision": 0.8285185185185184,
+      "recall": 0.7933333333333333,
+      "f1-score": 0.7872142506163232,
+      "support": 150.0
+    }
+  },
+  "predictions_csv": "team_handover_outputs\\FILE01_16_FULL_VALIDATION_EVAL\\cnn_gru_validation_full_predictions.csv"
+}
