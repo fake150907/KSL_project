@@ -1,0 +1,30 @@
+# Python cache/runtime
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local runtime artifacts
+.matplotlib/
+*.log
+outputs/reports/
+
+# Personal/team-lead notes
+TEAM_LEAD_REACT/
+
+# Large/local data
+data/raw/
+data/processed/
+data/New_sample/
+*.tar
+*.zip
+
+# Frontend dependencies/build output
+web/node_modules/
+web/dist/
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
