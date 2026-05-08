@@ -21,10 +21,7 @@ class Config:
     GMAIL_ADDRESS: str = os.environ.get("GMAIL_ADDRESS", "")
     GMAIL_APP_PASSWORD: str = os.environ.get("GMAIL_APP_PASSWORD", "")
 
-    # ── AI 요약 (추후 교체 가능) ───────────────────────
-    # 현재: OPENAI / ANTHROPIC / NONE(더미) 중 선택
-    AI_PROVIDER: str = os.environ.get("AI_PROVIDER", "NONE")
-    OPENAI_API_KEY: str = os.environ.get("OPENAI_API_KEY", "")
+    # ── AI API key ───────────────────────
     ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY", "")
 
     # ── 비전 모델 ──────────────────────────────────────
