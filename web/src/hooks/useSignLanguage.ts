@@ -1,0 +1,561 @@
+import { useEffect, useRef, useState, useCallback } from 'react'
+import type { Prediction, ChatMessage } from '../types'
+
+// 💡 매직 넘버 상수화
+const VIDEO_WIDTH = 640
+const VIDEO_HEIGHT = 480
+const JPEG_QUALITY = 0.75
+const DEMO_PLAYBACK_RATE = 0.65
+
+export interface DemoClip {
+  label: string
+  src: string
+}
+
+export interface DemoScenario {
+  label: string
+  clips: DemoClip[]
+}
+
+export const validationDemoScenarios: DemoScenario[] = [
+  {
+    label: '오른쪽 + 위 + 통증 + 못견디다',
+    clips: [
+      { label: '오른쪽', src: 'data/raw/validation_mp4/WORD1343_right_REAL17_F.mp4' },
+      { label: '위', src: 'data/raw/validation_mp4/WORD2100_stomach_REAL17_F.mp4' },
+      { label: '통증', src: 'data/raw/validation_mp4/WORD0689_pain_REAL17_F.mp4' },
+      { label: '못견디다', src: 'data/raw/validation_mp4/WORD0973_cannot_endure_REAL17_F.mp4' },
+    ],
+  },
+  {
+    label: '소화불량 + 어떻게 + 치료',
+    clips: [
+      { label: '소화불량', src: 'data/raw/validation_mp4/WORD0652_indigestion_REAL17_F.mp4' },
+      { label: '어떻게', src: 'data/raw/validation_mp4/WORD0331_how_REAL17_F.mp4' },
+      { label: '치료', src: 'data/raw/validation_mp4/WORD0064_treatment_REAL17_F.mp4' },
+    ],
+  },
+  {
+    label: '골절 + 회복 + 얼마',
+    clips: [
+      { label: '골절', src: 'data/raw/validation_mp4/WORD0387_fracture_REAL17_F.mp4' },
+      { label: '회복', src: 'data/raw/validation_mp4/WORD0057_recovery_REAL17_F.mp4' },
+      { label: '얼마', src: 'data/raw/validation_mp4/WORD0436_how_long_REAL17_F.mp4' },
+    ],
+  },
+]
+
+interface SignLanguageConfig {
+  modelType?: 'cnn_gru' | 'lstm'
+  confidenceThreshold?: number
+  windowSize?: number
+  stableMinCount?: number
+  captureIntervalMs?: number
+  maxMissingFrames?: number
+}
+
+export function useSignLanguage(
+  onMessage: (msg: ChatMessage) => void,
+  config: SignLanguageConfig = {}
+) {
+  const {
+    modelType = 'cnn_gru',
+    confidenceThreshold = 0.30,
+    windowSize = 16,
+    stableMinCount = 1,
+    captureIntervalMs = 60,
+    maxMissingFrames = 3,
+  } = config
+
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const landmarkCanvasRef = useRef<HTMLCanvasElement>(null)
+  
+  const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null)
+  const abortControllerRef = useRef<AbortController | null>(null)
+  const isMounted = useRef(true)
+
+  const isPredictingRef = useRef(false)
+  const nextFrameIdRef = useRef(0)
+  const latestFrameIdRef = useRef(0)
+  const clientIdRef = useRef<string>(Math.random().toString(36).substring(7))
+  
+  // 💡 [핵심 2] Peak Detection(최고점 추출)용 상태 저장소
+  const peakGestureRef = useRef<{ label: string, confidence: number } | null>(null)
+  const isHandUpRef = useRef(false)
+
+  const isDemoModeRef = useRef(false)
+  const activeStreamRef = useRef<MediaStream | null>(null)
+  const demoScenarioRef = useRef<DemoScenario | null>(null)
+  const demoClipIndexRef = useRef(0)
+  const demoGlossBufferRef = useRef<string[]>([])
+
+  const [isRunning, setIsRunning] = useState(false)
+  const [isDemoMode, setIsDemoMode] = useState(false)
+  const [activeDemoLabel, setActiveDemoLabel] = useState('')
+  const [activeDemoClipLabel, setActiveDemoClipLabel] = useState('')
+  const [currentPrediction, setCurrentPrediction] = useState<Prediction | null>(null)
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([])
+  const [selectedDeviceId, setSelectedDeviceId] = useState('')
+
+  const selectedDeviceIdRef = useRef(selectedDeviceId)
+  useEffect(() => { selectedDeviceIdRef.current = selectedDeviceId }, [selectedDeviceId])
+
+  useEffect(() => {
+    isMounted.current = true
+    return () => {
+      isMounted.current = false
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
+    }
+  }, [])
+
+  const refreshVideoDevices = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return
+    const devices = await navigator.mediaDevices.enumerateDevices()
+    const cameras = devices.filter((d) => d.kind === 'videoinput')
+    if (!isMounted.current) return
+    
+    setVideoDevices(cameras)
+    if (!selectedDeviceIdRef.current && cameras[0]?.deviceId) {
+      setSelectedDeviceId(cameras[0].deviceId)
+    }
+  }, [])
+
+  const clearLandmarkOverlay = useCallback(() => {
+    const canvas = landmarkCanvasRef.current
+    const ctx = canvas?.getContext('2d')
+    if (canvas && ctx) ctx.clearRect(0, 0, canvas.width, canvas.height)
+  }, [])
+
+  const resolveDemoSrc = (src: string) => {
+    if (src.startsWith('/')) return src
+    if (src.startsWith('data/raw/validation_mp4/')) {
+      return `/validation_demos/${src.split('/').pop()}`
+    }
+    return src
+  }
+
+  const commitRecognizedWord = useCallback((word: string) => {
+    if (isDemoModeRef.current) {
+      const prev = demoGlossBufferRef.current
+      if (prev[prev.length - 1] !== word) {
+        demoGlossBufferRef.current = [...prev, word]
+      }
+    }
+
+    onMessage({
+      id: `${Date.now()}-${Math.random()}`,
+      sender: 'patient',
+      text: word,
+      timestamp: new Date(),
+      label: '수어 번역',
+    })
+  }, [onMessage])
+
+  const convertDemoGlossToText = useCallback(async (scenario: DemoScenario) => {
+    const words = demoGlossBufferRef.current.length > 0
+      ? demoGlossBufferRef.current
+      : scenario.clips.map((clip) => clip.label)
+    const gloss = words.join(' + ')
+    if (!gloss) return
+
+    try {
+      const response = await fetch('/api/gloss_to_text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gloss, client_id: `demo-gloss-${Date.now()}` }),
+      })
+      const data = await response.json()
+      onMessage({
+        id: `${Date.now()}-demo-gloss-${Math.random()}`,
+        sender: 'patient',
+        text: data.text || gloss,
+        timestamp: new Date(),
+        label: '데모 문장 변환',
+      })
+    } catch (err) {
+      console.error('Demo gloss-to-text failed:', err)
+      onMessage({
+        id: `${Date.now()}-demo-gloss-fallback-${Math.random()}`,
+        sender: 'patient',
+        text: gloss,
+        timestamp: new Date(),
+        label: '데모 글로스',
+      })
+    }
+  }, [onMessage])
+
+  const stopCamera = useCallback(() => {
+    if (activeStreamRef.current) {
+      activeStreamRef.current.getTracks().forEach((t) => t.stop())
+      activeStreamRef.current = null
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null
+    }
+    if (isDemoModeRef.current && videoRef.current) {
+      videoRef.current.pause()
+      videoRef.current.removeAttribute('src')
+      videoRef.current.load()
+    }
+    isPredictingRef.current = false
+    isDemoModeRef.current = false
+    demoScenarioRef.current = null
+    demoClipIndexRef.current = 0
+    demoGlossBufferRef.current = []
+    if (isMounted.current) {
+      setIsDemoMode(false)
+      setIsRunning(false)
+      setActiveDemoLabel('')
+      setActiveDemoClipLabel('')
+      setCurrentPrediction(null)
+    }
+    clearLandmarkOverlay()
+  }, [clearLandmarkOverlay])
+
+  const startCamera = useCallback(async () => {
+    stopCamera()
+    try {
+      const deviceId = selectedDeviceIdRef.current
+      const videoConstraints: MediaTrackConstraints = {
+        width: { ideal: VIDEO_WIDTH },
+        height: { ideal: VIDEO_HEIGHT },
+        ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: videoConstraints,
+        audio: false,
+      })
+
+      activeStreamRef.current = stream
+
+      const video = videoRef.current
+      if (!video) {
+        stream.getTracks().forEach((t) => t.stop())
+        activeStreamRef.current = null
+        return
+      }
+
+      video.srcObject = stream
+      video.muted = true
+      video.playsInline = true
+
+      video.onloadedmetadata = () => {
+        if (!landmarkCanvasRef.current) return
+        landmarkCanvasRef.current.width = video.videoWidth || VIDEO_WIDTH
+        landmarkCanvasRef.current.height = video.videoHeight || VIDEO_HEIGHT
+      }
+
+      await video.play()
+      if (isMounted.current) setIsRunning(true)
+      await refreshVideoDevices()
+    } catch (err) {
+      console.error('[startCamera] Failed:', err)
+      if (activeStreamRef.current) {
+        activeStreamRef.current.getTracks().forEach((t) => t.stop())
+        activeStreamRef.current = null
+      }
+    }
+  }, [stopCamera, refreshVideoDevices])
+
+  const playDemoClip = useCallback(async (scenario: DemoScenario, clipIndex: number) => {
+    const video = videoRef.current
+    if (!video) return
+    const clip = scenario.clips[clipIndex]
+    if (!clip) return
+
+    if (activeStreamRef.current) {
+      activeStreamRef.current.getTracks().forEach((track) => track.stop())
+      activeStreamRef.current = null
+    }
+
+    clearLandmarkOverlay()
+    setCurrentPrediction(null)
+    isPredictingRef.current = false
+    clientIdRef.current = `demo-${scenario.label}-${clip.label}-${Date.now()}`
+    demoScenarioRef.current = scenario
+    demoClipIndexRef.current = clipIndex
+    isDemoModeRef.current = true
+
+    video.srcObject = null
+    video.src = resolveDemoSrc(clip.src)
+    video.loop = false
+    video.muted = true
+    video.playsInline = true
+    video.playbackRate = DEMO_PLAYBACK_RATE
+
+    if (landmarkCanvasRef.current) {
+      landmarkCanvasRef.current.width = video.videoWidth || VIDEO_WIDTH
+      landmarkCanvasRef.current.height = video.videoHeight || VIDEO_HEIGHT
+    }
+
+    setIsDemoMode(true)
+    setActiveDemoLabel(scenario.label)
+    setActiveDemoClipLabel(clip.label)
+    setIsRunning(true)
+
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        video.removeEventListener('loadeddata', done)
+        video.removeEventListener('canplay', done)
+        resolve()
+      }
+      video.addEventListener('loadeddata', done, { once: true })
+      video.addEventListener('canplay', done, { once: true })
+      video.load()
+      window.setTimeout(done, 1000)
+    })
+
+    await video.play()
+  }, [clearLandmarkOverlay])
+
+  const startDemoScenario = useCallback(async (scenario: DemoScenario) => {
+    stopCamera()
+    peakGestureRef.current = null
+    isHandUpRef.current = false
+    demoGlossBufferRef.current = []
+    await playDemoClip(scenario, 0)
+  }, [playDemoClip, stopCamera])
+
+  const handleDemoVideoEnded = useCallback(() => {
+    if (!isDemoModeRef.current || !demoScenarioRef.current) return
+    const scenario = demoScenarioRef.current
+    const nextClipIndex = demoClipIndexRef.current + 1
+
+    if (nextClipIndex < scenario.clips.length) {
+      void playDemoClip(scenario, nextClipIndex)
+      return
+    }
+
+    if (peakGestureRef.current) {
+      commitRecognizedWord(peakGestureRef.current.label)
+      peakGestureRef.current = null
+    }
+
+    void convertDemoGlossToText(scenario)
+    isDemoModeRef.current = false
+    demoScenarioRef.current = null
+    demoClipIndexRef.current = 0
+    setIsRunning(false)
+    setIsDemoMode(false)
+    setActiveDemoLabel('')
+    setActiveDemoClipLabel('')
+    clearLandmarkOverlay()
+  }, [clearLandmarkOverlay, commitRecognizedWord, convertDemoGlossToText, playDemoClip])
+
+  const drawLandmarks = useCallback((ctx: CanvasRenderingContext2D, landmarks: any) => {
+    if (!landmarks) return
+    const overlay = landmarkCanvasRef.current
+    const video = videoRef.current
+    const width = overlay?.width || VIDEO_WIDTH
+    const height = overlay?.height || VIDEO_HEIGHT
+    const videoWidth = video?.videoWidth || width
+    const videoHeight = video?.videoHeight || height
+    const scale = Math.min(width / videoWidth, height / videoHeight)
+    const drawWidth = videoWidth * scale
+    const drawHeight = videoHeight * scale
+    const offsetX = (width - drawWidth) / 2
+    const offsetY = (height - drawHeight) / 2
+    const px = (x: number) => offsetX + x * drawWidth
+    const py = (y: number) => offsetY + y * drawHeight
+
+    ctx.clearRect(0, 0, width, height)
+
+    const drawConnections = (points: any[], connections: number[][], color: string, radius: number) => {
+      if (!points?.length) return
+      ctx.strokeStyle = color
+      ctx.fillStyle = color
+      ctx.lineWidth = 2
+      connections.forEach(([s, e]) => {
+        if (points[s] && points[e]) {
+          ctx.beginPath()
+          ctx.moveTo(px(points[s][0]), py(points[s][1]))
+          ctx.lineTo(px(points[e][0]), py(points[e][1]))
+          ctx.stroke()
+        }
+      })
+      points.forEach((p) => {
+        ctx.beginPath()
+        ctx.arc(px(p[0]), py(p[1]), radius, 0, 2 * Math.PI)
+        ctx.fill()
+      })
+    }
+
+    const handConnections = [
+      [0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],
+      [0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],
+      [0,17],[17,18],[18,19],[19,20],
+    ]
+    const poseConnections = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24]]
+
+    drawConnections(landmarks.pose, poseConnections, '#38bdf8', 2)
+    drawConnections(landmarks.left_hand, handConnections, '#22c55e', 3)
+    drawConnections(landmarks.right_hand, handConnections, '#f97316', 3)
+  }, [])
+
+  const captureAndSend = useCallback(async () => {
+    if (!videoRef.current || !canvasRef.current) return
+    if (isPredictingRef.current) return
+    isPredictingRef.current = true
+
+    if (!canvasCtxRef.current) {
+      canvasCtxRef.current = canvasRef.current.getContext('2d')
+    }
+    const ctx = canvasCtxRef.current
+    if (!ctx) { isPredictingRef.current = false; return }
+
+    const sourceWidth = videoRef.current.videoWidth || VIDEO_WIDTH
+    const sourceHeight = videoRef.current.videoHeight || VIDEO_HEIGHT
+    const targetScale = Math.min(VIDEO_WIDTH / sourceWidth, VIDEO_HEIGHT / sourceHeight, 1)
+    const targetWidth = Math.round(sourceWidth * targetScale)
+    const targetHeight = Math.round(sourceHeight * targetScale)
+    
+    if (canvasRef.current.width !== targetWidth || canvasRef.current.height !== targetHeight) {
+      canvasRef.current.width = targetWidth
+      canvasRef.current.height = targetHeight
+    }
+    ctx.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height)
+
+    const frameId = nextFrameIdRef.current + 1
+    nextFrameIdRef.current = frameId
+    latestFrameIdRef.current = frameId
+
+    canvasRef.current.toBlob(async (blob) => {
+      if (!blob) { isPredictingRef.current = false; return }
+      const formData = new FormData()
+      formData.append('frame', blob)
+      formData.append('frame_id', frameId.toString())
+      formData.append('model_type', modelType === 'cnn_gru' ? 'sequence' : 'lstm')
+      formData.append('landmark_layout', 'mediapipe_xyz')
+      formData.append('client_id', clientIdRef.current)
+      formData.append('confidence_threshold', confidenceThreshold.toString())
+      formData.append('window_size', windowSize.toString())
+      formData.append('stable_min_count', stableMinCount.toString())
+      formData.append('max_missing_frames', maxMissingFrames.toString())
+
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
+      abortControllerRef.current = new AbortController()
+
+      try {
+        const res = await fetch('/api/predict', { 
+          method: 'POST', 
+          body: formData,
+          signal: abortControllerRef.current.signal 
+        })
+        const data = await res.json()
+        
+        if (!isMounted.current) return
+
+        const responseFrameId = Number(data.frame_id ?? data.prediction?.frame_id ?? frameId)
+        if (responseFrameId < latestFrameIdRef.current) return
+        if (!data.prediction) return
+
+        if (data.prediction.landmarks) {
+          const overlayCtx = landmarkCanvasRef.current?.getContext('2d')
+          if (overlayCtx) drawLandmarks(overlayCtx, data.prediction.landmarks)
+        }
+
+        const pred: Prediction = {
+          label: data.prediction.label,
+          confidence: data.prediction.confidence,
+          timestamp: Date.now(),
+          has_hand: data.prediction.has_hand,
+          window_filled: data.prediction.window_filled,
+          window_progress: data.prediction.window_progress,
+          window_size: data.prediction.window_size,
+          missing_frames: data.prediction.missing_frames,
+          max_missing_frames: data.prediction.max_missing_frames,
+          top_predictions: data.prediction.top_predictions,
+        }
+        
+        setCurrentPrediction(pred)
+
+        // 💡 [핵심 3] 수정된 Peak Detection 알고리즘 (연속 인식 가능)
+        if (pred.has_hand) {
+          isHandUpRef.current = true;
+          
+          if (pred.window_filled && pred.label && pred.confidence >= confidenceThreshold) {
+            // 케이스 A: 손을 내리지 않았는데 완전히 다른 수어 단어로 바뀌었을 때
+            if (peakGestureRef.current && peakGestureRef.current.label !== pred.label) {
+              // 1. 이전까지 모아둔 단어를 먼저 채팅창으로 발송!
+              commitRecognizedWord(peakGestureRef.current.label)
+              // 2. 새로운 단어로 최고점 추적 시작
+              peakGestureRef.current = { label: pred.label, confidence: pred.confidence };
+            } else {
+              // 케이스 B: 같은 단어라면 더 높은 점수(최고점)로 덮어쓰기
+              if (!peakGestureRef.current || pred.confidence > peakGestureRef.current.confidence) {
+                peakGestureRef.current = { label: pred.label, confidence: pred.confidence };
+              }
+            }
+          } else {
+            // 케이스 C: 손은 화면에 있는데, 확신도가 낮아지거나 동작을 풀었을 때 (휴식기 감지)
+            if (peakGestureRef.current) {
+              commitRecognizedWord(peakGestureRef.current.label)
+              peakGestureRef.current = null; // 발송 후 비워줌
+            }
+          }
+        } else {
+          // 케이스 D: 기존처럼 손이 카메라 밖으로 완전히 사라졌을 때
+          if (isHandUpRef.current) {
+            isHandUpRef.current = false;
+            if (peakGestureRef.current) {
+              commitRecognizedWord(peakGestureRef.current.label)
+              peakGestureRef.current = null;
+            }
+          }
+        }
+        
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          console.error('Failed to send frame:', err)
+        }
+      } finally {
+        isPredictingRef.current = false
+      }
+    }, 'image/jpeg', JPEG_QUALITY)
+  }, [modelType, confidenceThreshold, windowSize, stableMinCount, maxMissingFrames, commitRecognizedWord, drawLandmarks])
+
+  useEffect(() => {
+    refreshVideoDevices()
+    navigator.mediaDevices?.addEventListener?.('devicechange', refreshVideoDevices)
+    return () => {
+      stopCamera()
+      navigator.mediaDevices?.removeEventListener?.('devicechange', refreshVideoDevices)
+    }
+  }, [refreshVideoDevices, stopCamera])
+
+  useEffect(() => {
+    if (!isRunning) return
+    const interval = setInterval(captureAndSend, captureIntervalMs)
+    return () => clearInterval(interval)
+  }, [isRunning, captureAndSend, captureIntervalMs])
+
+  const getPredictionStatus = (prediction: Prediction): string => {
+    if (!prediction.has_hand) {
+      const misses = prediction.missing_frames ?? 0
+      const maxMisses = prediction.max_missing_frames ?? maxMissingFrames
+      return misses <= maxMisses && (prediction.window_progress ?? 0) > 0
+        ? `추적 보정 중 ${misses}/${maxMisses}`
+        : '손을 카메라 안에 보여주세요'
+    }
+    if (!prediction.window_filled) {
+      const progress = prediction.window_progress ?? 0
+      const size = prediction.window_size ?? windowSize
+      return `동작 수집 중 ${progress}/${size}`
+    }
+    if (!prediction.label) return '인식 불확실'
+    return `인식 중... ${prediction.label}`
+  }
+
+  return {
+    videoRef, canvasRef, landmarkCanvasRef,
+    isRunning, isDemoMode, activeDemoLabel, activeDemoClipLabel, currentPrediction,
+    videoDevices, selectedDeviceId, setSelectedDeviceId,
+    startCamera, stopCamera, startDemoScenario, handleDemoVideoEnded, getPredictionStatus,
+  }
+}

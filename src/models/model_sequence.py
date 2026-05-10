@@ -81,6 +81,79 @@ class CnnGruSequenceClassifier(nn.Module):
         return self.classifier(hidden[-1])
 
 
+class CnnGru3000SequenceClassifier(nn.Module):
+    def __init__(
+        self,
+        input_size: int = 225,
+        num_classes: int = 3000,
+        hidden_size: int = 128,
+        num_layers: int = 2,
+        dropout: float = 0.3,
+        conv_channels: int = 64,
+    ):
+        super().__init__()
+        self.input_size = input_size
+        self.cnn = nn.Sequential(
+            nn.Conv1d(input_size, conv_channels, kernel_size=3, padding=1),
+            nn.BatchNorm1d(conv_channels),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+        )
+        self.gru = nn.GRU(
+            input_size=conv_channels,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout if num_layers > 1 else 0.0,
+            bidirectional=True,
+        )
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_size * 2, 128),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(128, num_classes),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        features = self.cnn(x.transpose(1, 2)).transpose(1, 2)
+        output, _ = self.gru(features)
+        return self.classifier(output[:, -1, :])
+
+
+class Cnn1dSequenceClassifier(nn.Module):
+    def __init__(
+        self,
+        input_size: int,
+        num_classes: int,
+        hidden_size: int = 64,
+        dropout: float = 0.1,
+        conv_channels: int | None = None,
+    ):
+        super().__init__()
+        self.input_size = input_size
+        channels = conv_channels or hidden_size
+        self.cnn = nn.Sequential(
+            nn.Conv1d(input_size, channels, kernel_size=3, padding=1),
+            nn.BatchNorm1d(channels),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Conv1d(channels, channels, kernel_size=3, padding=1),
+            nn.BatchNorm1d(channels),
+            nn.GELU(),
+        )
+        self.classifier = nn.Sequential(
+            nn.Linear(channels, hidden_size),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_size, num_classes),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        features = self.cnn(x.transpose(1, 2))
+        pooled = torch.mean(features, dim=2)
+        return self.classifier(pooled)
+
+
 class BiGruAttentionSequenceClassifier(nn.Module):
     def __init__(
         self,
@@ -172,8 +245,25 @@ def build_sequence_model(
     num_heads: int = 4,
     sequence_length: int = 32,
 ) -> nn.Module:
+    if model_type == "cnn_1d":
+        return Cnn1dSequenceClassifier(
+            input_size=input_size,
+            num_classes=num_classes,
+            hidden_size=hidden_size,
+            dropout=dropout,
+            conv_channels=conv_channels,
+        )
     if model_type == "cnn_gru":
         return CnnGruSequenceClassifier(
+            input_size=input_size,
+            num_classes=num_classes,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            dropout=dropout,
+            conv_channels=conv_channels,
+        )
+    if model_type == "cnn_gru_3000":
+        return CnnGru3000SequenceClassifier(
             input_size=input_size,
             num_classes=num_classes,
             hidden_size=hidden_size,
