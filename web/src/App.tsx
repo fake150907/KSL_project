@@ -14,6 +14,27 @@ const STORAGE_KEY = 'sign-lang-messages'
 const SESSION_KEY = 'sign-lang-session'
 const AUTH_KEY = 'ksl-admin-authenticated'
 
+type IncomingChatMessage = Omit<ChatMessage, 'timestamp'> & {
+  timestamp: Date | string | number
+}
+
+const normalizeTimestamp = (timestamp: Date | string | number | null | undefined) => {
+  const date = timestamp instanceof Date ? timestamp : new Date(timestamp ?? Date.now())
+  return Number.isNaN(date.getTime()) ? new Date() : date
+}
+
+const normalizeMessage = (message: IncomingChatMessage): ChatMessage => ({
+  ...message,
+  timestamp: normalizeTimestamp(message.timestamp),
+})
+
+const serializeMessage = (message: ChatMessage) => ({
+  ...message,
+  timestamp: normalizeTimestamp(message.timestamp).toISOString(),
+})
+
+const serializeMessages = (items: ChatMessage[]) => JSON.stringify(items.map(serializeMessage))
+
 export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [sessionEnded, setSessionEnded] = useState(false)
@@ -25,8 +46,8 @@ export default function App() {
     try {
       const stored = localStorage.getItem(STORAGE_KEY)
       if (stored) {
-        const parsed = JSON.parse(stored) as Array<Omit<ChatMessage, 'timestamp'> & { timestamp: string }>
-        const restored = parsed.map((message) => ({ ...message, timestamp: new Date(message.timestamp) }))
+        const parsed = JSON.parse(stored) as IncomingChatMessage[]
+        const restored = parsed.map(normalizeMessage)
         restored.forEach((message) => seenIds.current.add(message.id))
         setMessages(restored)
       }
@@ -43,12 +64,12 @@ export default function App() {
     channel.onmessage = (event) => {
       const { type, payload } = event.data ?? {}
       if (type === 'new_message') {
-        const incoming = payload as Omit<ChatMessage, 'timestamp'> & { timestamp: string }
+        const incoming = normalizeMessage(payload as IncomingChatMessage)
         if (seenIds.current.has(incoming.id)) return
         seenIds.current.add(incoming.id)
         setMessages((prev) => {
-          const next = [...prev, { ...incoming, timestamp: new Date(incoming.timestamp) }]
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(next.map((msg) => ({ ...msg, timestamp: msg.timestamp.toISOString() }))))
+          const next = [...prev, incoming]
+          localStorage.setItem(STORAGE_KEY, serializeMessages(next))
           return next
         })
       }
@@ -82,20 +103,21 @@ export default function App() {
   }
 
   const handleNewMessage = useCallback((message: ChatMessage) => {
-    if (seenIds.current.has(message.id)) return
-    seenIds.current.add(message.id)
+    const normalized = normalizeMessage(message as IncomingChatMessage)
+    if (seenIds.current.has(normalized.id)) return
+    seenIds.current.add(normalized.id)
 
     setMessages((prev) => {
-      const next = [...prev, message]
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next.map((msg) => ({ ...msg, timestamp: msg.timestamp.toISOString() }))))
+      const next = [...prev, normalized]
+      localStorage.setItem(STORAGE_KEY, serializeMessages(next))
       return next
     })
-    channelRef.current?.postMessage({ type: 'new_message', payload: { ...message, timestamp: message.timestamp.toISOString() } })
+    channelRef.current?.postMessage({ type: 'new_message', payload: serializeMessage(normalized) })
 
     fetch('/api/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...message, timestamp: message.timestamp.toISOString() }),
+      body: JSON.stringify(serializeMessage(normalized)),
     }).catch(() => {})
   }, [])
 

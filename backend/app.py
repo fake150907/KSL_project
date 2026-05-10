@@ -198,8 +198,8 @@ def load_models() -> None:
     try:
         mp_holistic = mp.solutions.holistic.Holistic
         mp_holistic_instance = mp_holistic(
-            model_complexity=1,
-            smooth_landmarks=True,
+            model_complexity=0,
+            smooth_landmarks=False,
             min_detection_confidence=0.2,
             min_tracking_confidence=0.2,
         )
@@ -522,7 +522,6 @@ def video_feed():
 
 
 @app.route("/api/predict", methods=["POST"])
-@login_required
 def predict():
     session.modified = False
     request_started_at = time.perf_counter()
@@ -547,7 +546,13 @@ def predict():
                 config.get("realtime", {}).get("confidence_threshold", 0.35),
             )
         )
-        window_size = int(config["data"]["sequence_length"])
+        requested_window_size = int(
+            request.form.get(
+                "window_size",
+                config.get("realtime", {}).get("window_size", config["data"]["sequence_length"]),
+            )
+        )
+        window_size = max(8, min(requested_window_size, int(config["data"]["sequence_length"])))
         stable_min_count = int(
             request.form.get("stable_min_count", config.get("realtime", {}).get("stable_min_count", 2))
         )
