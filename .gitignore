@@ -14,6 +14,7 @@ outputs/reports/
 TEAM_LEAD_REACT/
 
 # Large/local data
+report
 data/raw/
 data/processed/
 data/New_sample/
