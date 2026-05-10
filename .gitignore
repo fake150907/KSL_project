@@ -23,6 +23,12 @@ data/New_sample/
 # Frontend dependencies/build output
 web/node_modules/
 web/dist/
+web2
+web3
+web4
+web5
+projects
+web_backup_before_web5
 
 # OS/editor files
 .DS_Store

@@ -10,31 +10,69 @@ from collections import Counter, deque
 from pathlib import Path
 from typing import Any
 
-import cv2
-import mediapipe as mp
-import numpy as np
-import torch
-from flask import Flask, Response, jsonify, request, session
+from flask import Flask, Response, jsonify, request, send_from_directory, session
 from flask_cors import CORS
-from PIL import Image
+
+try:
+    import numpy as np
+except ImportError:
+    np = None
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+try:
+    import mediapipe as mp
+except ImportError:
+    mp = None
+
+try:
+    import torch
+except ImportError:
+    torch = None
+
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
 
 os.environ.setdefault("MPLCONFIGDIR", str(Path(__file__).resolve().parents[1] / ".matplotlib"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from src.data.keypoint_utils import mediapipe_landmarks_to_frame, sequence_to_tensor
-from src.models.model_sequence import build_sequence_model
+from auth.routes import auth_bp, login_required
+from config import Config
+from notification.routes import notification_bp
+from src.services.gloss_to_text_service import gloss_to_text
 from src.utils.config import load_config
+from summary.routes import summary_bp
+
+try:
+    from src.data.keypoint_utils import mediapipe_landmarks_to_frame, sequence_to_tensor
+    from src.models.model_sequence import build_sequence_model
+except ImportError as exc:
+    print(f"Optional vision imports failed: {exc}")
+    mediapipe_landmarks_to_frame = None
+    sequence_to_tensor = None
+    build_sequence_model = None
 
 
 app = Flask(__name__)
-app.secret_key = "sign-interpreter-secret"
-CORS(app)
+app.secret_key = Config.FLASK_SECRET_KEY
+CORS(app, supports_credentials=True)
+app.register_blueprint(auth_bp)
+app.register_blueprint(summary_bp)
+app.register_blueprint(notification_bp)
 
 memory_windows: dict[str, list[np.ndarray]] = {}
 memory_misses: dict[str, int] = {}
 memory_predictions: dict[str, deque] = {}
+gloss_to_text_last_called_at: dict[str, float] = {}
+GLOSS_TO_TEXT_MIN_INTERVAL_SECONDS = 2.0
 
-CONFIG_PATH = os.environ.get("SIGN_CONFIG", "config/web_demo.yaml")
+ROOT_DIR = Path(__file__).resolve().parents[1]
+CONFIG_PATH = os.environ.get("SIGN_CONFIG", str(ROOT_DIR / "config" / "web_demo.yaml"))
 
 try:
     config = load_config(CONFIG_PATH)
@@ -53,13 +91,9 @@ except Exception as exc:
         },
     }
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
 CHECKPOINT_DIR = ROOT_DIR / config.get("paths", {}).get("checkpoints_dir", "outputs/checkpoints")
-WEB_MODEL_DIR = CHECKPOINT_DIR / "web_models"
-SEQUENCE_MODEL = CHECKPOINT_DIR / "sequence_model.pt"
 MODEL_FILES = {
-    "cnn_gru": WEB_MODEL_DIR / "sequence_model_cnn_gru_FILE01_03-FILE10_12_valacc0.8571.pt",
-    "lstm": WEB_MODEL_DIR / "sequence_model_lstm_FILE01_03-FILE10_12_valacc0.8095.pt",
+    "cnn_gru": CHECKPOINT_DIR / "best_cnngru_3000.pt",
 }
 
 sequence_models: dict[str, torch.nn.Module] = {}
@@ -76,32 +110,88 @@ def softmax(x: np.ndarray) -> np.ndarray:
     return exp / np.sum(exp)
 
 
+def load_label_map(path: Path) -> list[str]:
+    idx_to_label_path = ROOT_DIR / "model_results" / "idx_to_label_3000.json"
+    if idx_to_label_path.exists():
+        with idx_to_label_path.open("r", encoding="utf-8") as f:
+            idx_to_label = json.load(f)
+        labels: list[str] = []
+        for key, value in sorted(idx_to_label.items(), key=lambda item: int(item[0])):
+            if isinstance(value, dict):
+                labels.append(str(value.get("label") or value.get("word_id") or key))
+            else:
+                labels.append(str(value))
+        return labels
+
+    label_map_path = ROOT_DIR / "model_results" / "label_map_word_id_3000.json"
+    if not label_map_path.exists():
+        label_map_path = path.with_name("label_map.json")
+    if not label_map_path.exists():
+        label_map_path = ROOT_DIR / "model_results" / "label_map.json"
+    with label_map_path.open("r", encoding="utf-8") as f:
+        label_map = json.load(f)
+    return [label for label, _ in sorted(label_map.items(), key=lambda item: int(item[1]))]
+
+
 def load_sequence_checkpoint(path: Path) -> tuple[torch.nn.Module, list[str]]:
+    if torch is None or build_sequence_model is None:
+        raise RuntimeError("Vision model dependencies are not installed")
     bundle = torch.load(path, map_location="cpu")
-    train_config = bundle.get("config", {}).get("train", {})
+    if isinstance(bundle, dict) and "model_state_dict" in bundle:
+        state_dict = bundle["model_state_dict"]
+        labels = load_label_map(path)
+        model_type = "cnn_gru_3000"
+        input_size = int(bundle.get("feature_dim", 225))
+        num_classes = int(bundle.get("num_classes", len(labels)))
+        train_config = {
+            "hidden_size": 128,
+            "num_layers": 2,
+            "dropout": 0.3,
+            "model_type": model_type,
+            "conv_channels": 64,
+        }
+    elif isinstance(bundle, dict) and "state_dict" in bundle:
+        state_dict = bundle["state_dict"]
+        labels = [str(x) for x in bundle["labels"]]
+        train_config = bundle.get("config", {}).get("train", {})
+        model_type = str(bundle.get("model_type", train_config.get("model_type", "rnn")))
+        input_size = int(bundle["input_size"])
+        num_classes = len(labels)
+    else:
+        state_dict = bundle
+        labels = load_label_map(path)
+        train_config = {"hidden_size": 64, "dropout": 0.5, "model_type": "cnn_1d", "conv_channels": 64}
+        model_type = "cnn_1d"
+        input_size = int(state_dict["cnn.0.weight"].shape[1])
+        num_classes = int(state_dict["classifier.3.weight"].shape[0])
+
     model = build_sequence_model(
-        input_size=bundle["input_size"],
-        num_classes=len(bundle["labels"]),
+        input_size=input_size,
+        num_classes=num_classes,
         hidden_size=int(train_config.get("hidden_size", 64)),
         num_layers=int(train_config.get("num_layers", 1)),
         dropout=float(train_config.get("dropout", 0.1)),
         rnn_type=str(train_config.get("rnn_type", "gru")),
-        model_type=str(bundle.get("model_type", train_config.get("model_type", "rnn"))),
+        model_type=model_type,
         conv_channels=int(train_config.get("conv_channels", 128)),
         num_heads=int(train_config.get("num_heads", 4)),
         sequence_length=int(
-            bundle.get("config", {})
-            .get("data", {})
-            .get("sequence_length", config["data"]["sequence_length"])
+            bundle.get("config", {}).get("data", {}).get("sequence_length", config["data"]["sequence_length"])
+            if isinstance(bundle, dict)
+            else config["data"]["sequence_length"]
         ),
     )
-    model.load_state_dict(bundle["state_dict"])
+    model.load_state_dict(state_dict)
     model.eval()
-    return model, [str(x) for x in bundle["labels"]]
+    return model, labels
 
 
 def load_models() -> None:
     global sequence_models, sequence_labels, mp_holistic, mp_holistic_instance, mp_drawing
+
+    if mp is None or torch is None or build_sequence_model is None:
+        print("Vision dependencies are not installed; /api/predict will return 503")
+        return
 
     try:
         mp_holistic = mp.solutions.holistic.Holistic
@@ -125,15 +215,6 @@ def load_models() -> None:
                 print(f"Loaded {model_key} model from {path}")
         except Exception as exc:
             print(f"Failed to load {model_key} model from {path}: {exc}")
-
-    if "cnn_gru" not in sequence_models and SEQUENCE_MODEL.exists():
-        try:
-            model, labels = load_sequence_checkpoint(SEQUENCE_MODEL)
-            sequence_models["cnn_gru"] = model
-            sequence_labels["cnn_gru"] = labels
-            print(f"Loaded cnn_gru fallback model from {SEQUENCE_MODEL}")
-        except Exception as exc:
-            print(f"Failed to load sequence fallback model: {exc}")
 
 
 def get_session_window(client_id: str) -> list[np.ndarray]:
@@ -174,6 +255,9 @@ def normalize_model_type(model_type: str) -> str:
         "cnn-gru": "cnn_gru",
         "cnn+gru": "cnn_gru",
         "cnn_gru": "cnn_gru",
+        "cnn_1d": "cnn_1d",
+        "cnn-1d": "cnn_1d",
+        "1d-cnn": "cnn_1d",
         "lstm": "lstm",
     }
     return aliases.get(model_type.lower(), "cnn_gru")
@@ -207,6 +291,10 @@ def align_tensor_features(tensor: np.ndarray, expected: int) -> np.ndarray:
 
 
 def generate_mjpeg_frames(camera_index: int = 0):
+    if cv2 is None or np is None:
+        yield b"--frame\r\nContent-Type: text/plain\r\n\r\nCamera dependencies are not installed\r\n"
+        return
+
     cap = cv2.VideoCapture(camera_index)
     if not cap.isOpened():
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -243,7 +331,92 @@ def health():
     return jsonify({"status": "ok"}), 200
 
 
+@app.route("/api/gloss_to_text", methods=["POST"])
+def api_gloss_to_text():
+    data = request.get_json(force=True, silent=True) or {}
+    client_id = str(data.get("client_id") or request.remote_addr or "default")
+    now = time.monotonic()
+    last_called_at = gloss_to_text_last_called_at.get(client_id, 0.0)
+    elapsed = now - last_called_at
+    if elapsed < GLOSS_TO_TEXT_MIN_INTERVAL_SECONDS:
+        retry_after = round(GLOSS_TO_TEXT_MIN_INTERVAL_SECONDS - elapsed, 2)
+        return (
+            jsonify(
+                {
+                    "error": "gloss_to_text API는 2초에 한 번만 호출할 수 있습니다.",
+                    "retry_after": retry_after,
+                }
+            ),
+            429,
+        )
+    gloss_to_text_last_called_at[client_id] = now
+
+    gloss_value = data.get("gloss", "")
+    if isinstance(gloss_value, list):
+        gloss = " + ".join(str(item).strip() for item in gloss_value if str(item).strip())
+    else:
+        gloss = str(gloss_value).strip()
+    if not gloss:
+        return jsonify({"error": "gloss field is required"}), 400
+
+    provider = data.get("provider")
+    model = data.get("model")
+    result = gloss_to_text(
+        gloss,
+        provider=str(provider).strip() if provider else None,
+        model=str(model).strip() if model else None,
+    )
+    return jsonify({"gloss": gloss, "text": result}), 200
+
+
+@app.route("/api/kakao/token", methods=["POST"])
+def kakao_token():
+    data = request.get_json(silent=True) or {}
+    code = str(data.get("code", "")).strip()
+    redirect_uri = str(data.get("redirect_uri", "")).strip()
+
+    if not Config.KAKAO_REST_API_KEY:
+        return jsonify({"error": "KAKAO_REST_API_KEY가 설정되어 있지 않습니다."}), 500
+    if not code:
+        return jsonify({"error": "카카오 인가 코드(code)가 필요합니다."}), 400
+    if not redirect_uri:
+        return jsonify({"error": "redirect_uri가 필요합니다."}), 400
+
+    try:
+        import requests
+
+        response = requests.post(
+            "https://kauth.kakao.com/oauth/token",
+            headers={"Content-Type": "application/x-www-form-urlencoded;charset=utf-8"},
+            data={
+                "grant_type": "authorization_code",
+                "client_id": Config.KAKAO_REST_API_KEY,
+                "redirect_uri": redirect_uri,
+                "code": code,
+            },
+            timeout=10,
+        )
+        result = response.json()
+        if response.status_code != 200:
+            return jsonify({"error": result}), response.status_code
+        return jsonify(
+            {
+                "access_token": result.get("access_token"),
+                "refresh_token": result.get("refresh_token"),
+                "expires_in": result.get("expires_in"),
+            }
+        ), 200
+    except Exception as exc:
+        return jsonify({"error": f"카카오 토큰 발급 실패: {exc}"}), 502
+
+
+@app.route("/validation_demos/<path:filename>", methods=["GET"])
+def validation_demo_video(filename: str):
+    return send_from_directory(ROOT_DIR / "data" / "raw" / "validation_mp4", filename)
+
+
 @app.route("/video_feed", methods=["GET"])
+@login_required
 def video_feed():
     camera_index = int(request.args.get("camera", 0))
     return Response(
@@ -253,10 +426,13 @@ def video_feed():
 
 
 @app.route("/api/predict", methods=["POST"])
+@login_required
 def predict():
     session.modified = False
     request_started_at = time.perf_counter()
     try:
+        if cv2 is None or Image is None or mp is None or torch is None or mediapipe_landmarks_to_frame is None or sequence_to_tensor is None:
+            return jsonify({"error": "Vision dependencies are not installed"}), 503
         if mp_holistic_instance is None:
             return jsonify({"error": "MediaPipe is not available"}), 503
         if "frame" not in request.files:
