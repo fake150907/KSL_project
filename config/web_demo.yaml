@@ -44,9 +44,13 @@ realtime:
   landmark_layout: mediapipe_xyz
   window_size: 32
   capture_interval_ms: 100
-  confidence_threshold: 0.35
-  stable_min_count: 2
+  confidence_threshold: 0.225
+  stable_min_count: 1
   max_missing_frames: 3
+  min_segment_frames: 8
+  segmentation_mode: hand_gap
+  temperature: 0.9
+  tta_enabled: true
   cooldown_seconds: 1.0
 
 services:

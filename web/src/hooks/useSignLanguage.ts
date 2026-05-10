@@ -4,8 +4,12 @@ import type { Prediction, ChatMessage } from '../types'
 // 💡 매직 넘버 상수화
 const VIDEO_WIDTH = 640
 const VIDEO_HEIGHT = 480
-const JPEG_QUALITY = 0.75
+const PREDICT_FRAME_WIDTH = 640
+const PREDICT_FRAME_HEIGHT = 480
+const JPEG_QUALITY = 0.88
+const MODEL_INFERENCE_EVERY_N_FRAMES = 5
 const DEMO_PLAYBACK_RATE = 0.65
+const LIVE_GLOSS_IDLE_MS = 6500
 
 export interface DemoClip {
   label: string
@@ -89,6 +93,8 @@ export function useSignLanguage(
   const demoScenarioRef = useRef<DemoScenario | null>(null)
   const demoClipIndexRef = useRef(0)
   const demoGlossBufferRef = useRef<string[]>([])
+  const liveGlossBufferRef = useRef<string[]>([])
+  const liveGlossTimerRef = useRef<number | null>(null)
 
   const [isRunning, setIsRunning] = useState(false)
   const [isDemoMode, setIsDemoMode] = useState(false)
@@ -137,12 +143,55 @@ export function useSignLanguage(
     return src
   }
 
+  const convertLiveGlossToText = useCallback(async () => {
+    const words = liveGlossBufferRef.current
+    liveGlossBufferRef.current = []
+    const gloss = words.join(' + ')
+    if (!gloss) return
+
+    try {
+      const response = await fetch('/api/gloss_to_text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gloss, client_id: `live-gloss-${clientIdRef.current}` }),
+      })
+      const data = await response.json()
+      onMessage({
+        id: `${Date.now()}-live-gloss-${Math.random()}`,
+        sender: 'patient',
+        text: data.text || gloss,
+        timestamp: new Date(),
+        label: '수어 문장 변환',
+      })
+    } catch (err) {
+      console.error('Live gloss-to-text failed:', err)
+      onMessage({
+        id: `${Date.now()}-live-gloss-fallback-${Math.random()}`,
+        sender: 'patient',
+        text: gloss,
+        timestamp: new Date(),
+        label: '수어 글로스',
+      })
+    }
+  }, [onMessage])
+
   const commitRecognizedWord = useCallback((word: string) => {
     if (isDemoModeRef.current) {
       const prev = demoGlossBufferRef.current
       if (prev[prev.length - 1] !== word) {
         demoGlossBufferRef.current = [...prev, word]
       }
+    } else {
+      const prev = liveGlossBufferRef.current
+      if (prev[prev.length - 1] !== word) {
+        liveGlossBufferRef.current = [...prev, word]
+      }
+      if (liveGlossTimerRef.current) {
+        window.clearTimeout(liveGlossTimerRef.current)
+      }
+      liveGlossTimerRef.current = window.setTimeout(() => {
+        void convertLiveGlossToText()
+      }, LIVE_GLOSS_IDLE_MS)
     }
 
     onMessage({
@@ -152,7 +201,7 @@ export function useSignLanguage(
       timestamp: new Date(),
       label: '수어 번역',
     })
-  }, [onMessage])
+  }, [convertLiveGlossToText, onMessage])
 
   const convertDemoGlossToText = useCallback(async (scenario: DemoScenario) => {
     const words = demoGlossBufferRef.current.length > 0
@@ -205,6 +254,13 @@ export function useSignLanguage(
     demoScenarioRef.current = null
     demoClipIndexRef.current = 0
     demoGlossBufferRef.current = []
+    if (liveGlossTimerRef.current) {
+      window.clearTimeout(liveGlossTimerRef.current)
+      liveGlossTimerRef.current = null
+    }
+    if (!isDemoModeRef.current && liveGlossBufferRef.current.length > 0) {
+      void convertLiveGlossToText()
+    }
     if (isMounted.current) {
       setIsDemoMode(false)
       setIsRunning(false)
@@ -213,7 +269,7 @@ export function useSignLanguage(
       setCurrentPrediction(null)
     }
     clearLandmarkOverlay()
-  }, [clearLandmarkOverlay])
+  }, [clearLandmarkOverlay, convertLiveGlossToText])
 
   const startCamera = useCallback(async () => {
     stopCamera()
@@ -350,25 +406,39 @@ export function useSignLanguage(
     if (!landmarks) return
     const overlay = landmarkCanvasRef.current
     const video = videoRef.current
-    const width = overlay?.width || VIDEO_WIDTH
-    const height = overlay?.height || VIDEO_HEIGHT
-    const videoWidth = video?.videoWidth || width
-    const videoHeight = video?.videoHeight || height
-    const scale = Math.min(width / videoWidth, height / videoHeight)
+    if (!overlay || !video) return
+
+    const dpr = window.devicePixelRatio || 1
+    const cssWidth = overlay.clientWidth || VIDEO_WIDTH
+    const cssHeight = overlay.clientHeight || VIDEO_HEIGHT
+    const canvasWidth = Math.round(cssWidth * dpr)
+    const canvasHeight = Math.round(cssHeight * dpr)
+
+    if (overlay.width !== canvasWidth || overlay.height !== canvasHeight) {
+      overlay.width = canvasWidth
+      overlay.height = canvasHeight
+    }
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.clearRect(0, 0, cssWidth, cssHeight)
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+
+    const videoWidth = video.videoWidth || VIDEO_WIDTH
+    const videoHeight = video.videoHeight || VIDEO_HEIGHT
+    const scale = Math.min(cssWidth / videoWidth, cssHeight / videoHeight)
     const drawWidth = videoWidth * scale
     const drawHeight = videoHeight * scale
-    const offsetX = (width - drawWidth) / 2
-    const offsetY = (height - drawHeight) / 2
+    const offsetX = (cssWidth - drawWidth) / 2
+    const offsetY = (cssHeight - drawHeight) / 2
     const px = (x: number) => offsetX + x * drawWidth
     const py = (y: number) => offsetY + y * drawHeight
 
-    ctx.clearRect(0, 0, width, height)
-
-    const drawConnections = (points: any[], connections: number[][], color: string, radius: number) => {
+    const drawConnections = (points: any[], connections: number[][], color: string, radius: number, lineWidth = 2) => {
       if (!points?.length) return
       ctx.strokeStyle = color
       ctx.fillStyle = color
-      ctx.lineWidth = 2
+      ctx.lineWidth = lineWidth
       connections.forEach(([s, e]) => {
         if (points[s] && points[e]) {
           ctx.beginPath()
@@ -391,9 +461,9 @@ export function useSignLanguage(
     ]
     const poseConnections = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24]]
 
-    drawConnections(landmarks.pose, poseConnections, '#38bdf8', 2)
-    drawConnections(landmarks.left_hand, handConnections, '#22c55e', 3)
-    drawConnections(landmarks.right_hand, handConnections, '#f97316', 3)
+    drawConnections(landmarks.pose, poseConnections, 'rgba(56,189,248,0.75)', 2, 2)
+    drawConnections(landmarks.left_hand, handConnections, '#22c55e', 3, 2.5)
+    drawConnections(landmarks.right_hand, handConnections, '#f97316', 3, 2.5)
   }, [])
 
   const captureAndSend = useCallback(async () => {
@@ -409,7 +479,7 @@ export function useSignLanguage(
 
     const sourceWidth = videoRef.current.videoWidth || VIDEO_WIDTH
     const sourceHeight = videoRef.current.videoHeight || VIDEO_HEIGHT
-    const targetScale = Math.min(VIDEO_WIDTH / sourceWidth, VIDEO_HEIGHT / sourceHeight, 1)
+    const targetScale = Math.min(PREDICT_FRAME_WIDTH / sourceWidth, PREDICT_FRAME_HEIGHT / sourceHeight, 1)
     const targetWidth = Math.round(sourceWidth * targetScale)
     const targetHeight = Math.round(sourceHeight * targetScale)
     
@@ -435,6 +505,8 @@ export function useSignLanguage(
       formData.append('window_size', windowSize.toString())
       formData.append('stable_min_count', stableMinCount.toString())
       formData.append('max_missing_frames', maxMissingFrames.toString())
+      formData.append('min_segment_frames', '8')
+      formData.append('run_model', (frameId % MODEL_INFERENCE_EVERY_N_FRAMES === 0).toString())
 
       if (abortControllerRef.current) {
         abortControllerRef.current.abort()
@@ -474,6 +546,14 @@ export function useSignLanguage(
         }
         
         setCurrentPrediction(pred)
+        if (data.prediction.segment_finalized) {
+          isHandUpRef.current = false
+          peakGestureRef.current = null
+          if (pred.label && pred.confidence >= confidenceThreshold) {
+            commitRecognizedWord(pred.label)
+          }
+          return
+        }
 
         // 💡 [핵심 3] 수정된 Peak Detection 알고리즘 (연속 인식 가능)
         if (pred.has_hand) {
