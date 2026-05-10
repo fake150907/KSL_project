@@ -44,6 +44,7 @@ export default function PatientKiosk({
   const [sendError, setSendError] = useState('')
   const [showPopup, setShowPopup] = useState(false)
   const [showDemoList, setShowDemoList] = useState(false)
+  const [predictionLog, setPredictionLog] = useState<Array<{ label: string; confidence: number; timestamp: number }>>([])
 
   const {
     videoRef, canvasRef, landmarkCanvasRef,
@@ -106,6 +107,20 @@ export default function PatientKiosk({
     return () => clearInterval(id)
   }, [])
 
+  useEffect(() => {
+    if (!currentPrediction?.window_filled) return
+    const top = currentPrediction.top_predictions?.[0]
+    const label = currentPrediction.label || top?.label
+    const confidence = currentPrediction.confidence || top?.confidence || 0
+    if (!label) return
+
+    setPredictionLog((prev) => {
+      const last = prev[0]
+      if (last && last.label === label && Math.abs(last.confidence - confidence) < 0.001) return prev
+      return [{ label, confidence, timestamp: Date.now() }, ...prev].slice(0, 4)
+    })
+  }, [currentPrediction?.timestamp, currentPrediction?.window_filled, currentPrediction?.label, currentPrediction?.confidence, currentPrediction?.top_predictions])
+
   const predictionStatus = currentPrediction ? getPredictionStatus(currentPrediction) : ''
   const isRecognized = !!currentPrediction?.window_filled && !!currentPrediction?.label && (currentPrediction?.confidence ?? 0) >= 0.30
   const bannerLabel = isRecognized ? predictionStatus.replace('인식 중... ', '') : predictionStatus
@@ -113,6 +128,46 @@ export default function PatientKiosk({
   const buildChatText = () => {
     if (messages.length === 0) return '대화 내역이 없습니다.'
     return messages.map((m) => `[${m.timestamp.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}] ${m.sender === 'doctor' ? '의사' : '환자'}: ${m.text}`).join('\n')
+  }
+
+  const getLatestMedicalRecordText = () => {
+    try {
+      const records = JSON.parse(localStorage.getItem('medical_records') || '[]')
+      if (!Array.isArray(records)) return ''
+      const patientDigits = actualPatientPhone.replace(/[^0-9]/g, '')
+      const matched = records.find((record: any) => {
+        const recordDigits = String(record?.patientPhone || '').replace(/[^0-9]/g, '')
+        return recordDigits && patientDigits && recordDigits === patientDigits
+      }) || records[0]
+      if (!matched) return ''
+
+      const notes = Array.isArray(matched.notes) ? matched.notes : []
+      const noteLines = notes
+        .map((note: any) => {
+          const tag = String(note?.tag || '메모')
+          const text = String(note?.text || '').trim()
+          return text ? `- ${tag}: ${text}` : ''
+        })
+        .filter(Boolean)
+
+      return [
+        `[환자 정보] 이름: ${matched.patientName || actualPatientName}, 연락처: ${matched.patientPhone || actualPatientPhone}`,
+        noteLines.length > 0 ? `[의사 메모/처방]\n${noteLines.join('\n')}` : '[의사 메모/처방]\n- 기록 없음',
+      ].join('\n')
+    } catch {
+      return ''
+    }
+  }
+
+  const buildClinicalSummaryInput = () => {
+    const conversation = messages.map((m) => {
+      const speaker = m.sender === 'doctor' ? '의사' : '환자'
+      return `${speaker}: ${m.text}`
+    })
+    const recordText = getLatestMedicalRecordText()
+    if (recordText) conversation.unshift(recordText)
+    if (conversation.length === 0) conversation.push('대화 기록 없음')
+    return conversation
   }
 
   const formatPhone = (val: string) => {
@@ -219,6 +274,55 @@ export default function PatientKiosk({
     setSendStatus('error')
   }
 
+  const handleSendKakaoSummaryV2 = async () => {
+    const cleaned = actualPatientPhone.replace(/[^0-9]/g, '')
+    if (cleaned.length < 10) return
+    setSendStatus('sending')
+    setSendError('')
+
+    const conversation = buildClinicalSummaryInput()
+    const chatText = buildChatText()
+    const accessToken = localStorage.getItem('KAKAO_ACCESS_TOKEN') || ''
+    const refreshToken = localStorage.getItem('KAKAO_REFRESH_TOKEN') || ''
+    let summaryText = chatText
+
+    try {
+      const summaryRes = await fetch('/api/summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ conversation }),
+      })
+      if (summaryRes.ok) {
+        const summaryData = await summaryRes.json().catch(() => ({}))
+        summaryText = summaryData.summary || chatText
+      }
+
+      const res = await fetch('/api/notify/kakao', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ access_token: accessToken, refresh_token: refreshToken, summary: summaryText }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.error || '카카오톡 전송에 실패했습니다.')
+      }
+      if (data.access_token) localStorage.setItem('KAKAO_ACCESS_TOKEN', data.access_token)
+      if (data.refresh_token) localStorage.setItem('KAKAO_REFRESH_TOKEN', data.refresh_token)
+      setSendStatus('sent')
+      window.setTimeout(() => navigate('/kiosk'), 1200)
+      return
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : '카카오톡 전송에 실패했습니다.')
+    }
+
+    try {
+      await navigator.clipboard.writeText(`[수어 진료 요약본]\n전화번호: ${cleaned}\n\n${summaryText}`)
+    } catch {}
+    setSendStatus('error')
+  }
+
   const handleClosePopup = () => { setShowPopup(false); navigate('/kiosk') }
   const handleDemoSelect = (scenario: DemoScenario) => {
     setShowDemoList(false)
@@ -282,6 +386,19 @@ export default function PatientKiosk({
               <div className="flex flex-col">
                 <span className={`text-[20px] font-bold ${isRecognized ? 'text-emerald-600' : 'text-blue-600'}`}>{isRecognized ? '수어 인식 성공' : '실시간 인식 중'}</span>
                 <span className="text-[34px] font-black text-slate-800 leading-tight">{bannerLabel || '손을 카메라에 맞춰 보여주세요'}</span>
+              </div>
+              <div className="ml-auto flex max-w-[430px] flex-col items-end gap-2">
+                <span className="text-[18px] font-black text-slate-400">최근 예측 단어</span>
+                <div className="flex flex-wrap justify-end gap-2">
+                  {predictionLog.length > 0 ? predictionLog.map((item) => (
+                    <span key={`${item.timestamp}-${item.label}`} className="rounded-2xl bg-white px-4 py-2 text-[20px] font-black text-slate-800 shadow-sm border border-slate-100">
+                      {item.label}
+                      <span className="ml-2 text-[16px] text-blue-500">{Math.round(item.confidence * 100)}%</span>
+                    </span>
+                  )) : (
+                    <span className="rounded-2xl bg-white/70 px-4 py-2 text-[20px] font-bold text-slate-400">아직 없음</span>
+                  )}
+                </div>
               </div>
             </>
           ) : (
@@ -393,7 +510,7 @@ export default function PatientKiosk({
               </div>
               
               <div className="flex flex-col w-full gap-4">
-                <button onClick={handleSendKakaoSummary} disabled={sendStatus === 'sending' || actualPatientPhone.length < 10} className={`w-full h-[110px] rounded-[32px] text-[38px] font-black flex items-center justify-center gap-5 transition-all ${sendStatus === 'sending' || actualPatientPhone.length < 10 ? 'bg-slate-100 text-slate-300' : 'bg-[#FEE500] text-[#3C1E1E] hover:brightness-105 active:scale-[0.98] shadow-lg shadow-yellow-100'}`}>
+                <button onClick={handleSendKakaoSummaryV2} disabled={sendStatus === 'sending' || actualPatientPhone.length < 10} className={`w-full h-[110px] rounded-[32px] text-[38px] font-black flex items-center justify-center gap-5 transition-all ${sendStatus === 'sending' || actualPatientPhone.length < 10 ? 'bg-slate-100 text-slate-300' : 'bg-[#FEE500] text-[#3C1E1E] hover:brightness-105 active:scale-[0.98] shadow-lg shadow-yellow-100'}`}>
                   {sendStatus === 'sending' ? '전송하는 중...' : '카카오톡으로 받기'}
                 </button>
                 {sendStatus === 'error' && (

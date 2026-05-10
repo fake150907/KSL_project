@@ -17,7 +17,9 @@ class Config:
     GMAIL_ADDRESS: str = os.environ.get("GMAIL_ADDRESS", "")
     GMAIL_APP_PASSWORD: str = os.environ.get("GMAIL_APP_PASSWORD", "")
     KAKAO_REST_API_KEY: str = os.environ.get("KAKAO_REST_API_KEY", "")
+    KAKAO_CLIENT_SECRET: str = os.environ.get("KAKAO_CLIENT_SECRET", "")
     KAKAO_ACCESS_TOKEN: str = os.environ.get("KAKAO_ACCESS_TOKEN", "")
+    KAKAO_REFRESH_TOKEN: str = os.environ.get("KAKAO_REFRESH_TOKEN", "")
 
     # Standard name first, plus the misspelled variant mentioned during handoff.
     ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTROPIC_API_KEY", "")
