@@ -707,7 +707,8 @@ def predict():
                 config.get("realtime", {}).get("window_size", config["data"]["sequence_length"]),
             )
         )
-        window_size = max(8, min(requested_window_size, int(config["data"]["sequence_length"])))
+        sequence_length = int(config["data"]["sequence_length"])
+        window_size = max(8, min(requested_window_size, sequence_length))
         stable_min_count = int(
             request.form.get("stable_min_count", config.get("realtime", {}).get("stable_min_count", 2))
         )
@@ -764,8 +765,11 @@ def predict():
             "missing_frames": get_session_misses(client_id),
             "max_missing_frames": max_missing_frames,
             "min_segment_frames": min_segment_frames,
+            "segment_frames": None,
+            "sequence_length": sequence_length,
             "temperature": temperature,
             "tta_enabled": use_tta,
+            "run_model": run_model,
             "top_predictions": [],
             "frame_id": frame_id,
             "landmark_layout": landmark_layout,
@@ -849,8 +853,12 @@ def predict():
             f"has_hand={prediction.get('has_hand')}, "
             f"has_pose={prediction.get('has_pose')}, "
             f"window={prediction.get('window_progress')}/{prediction.get('window_size')}, "
+            f"segment_frames={prediction.get('segment_frames')}, "
+            f"min_segment_frames={prediction.get('min_segment_frames')}, "
+            f"sequence_length={prediction.get('sequence_length')}, "
             f"miss={prediction.get('missing_frames')}/{prediction.get('max_missing_frames')}, "
             f"window_filled={prediction.get('window_filled')}, "
+            f"run_model={prediction.get('run_model')}, "
             f"temp={prediction.get('temperature')}, "
             f"tta={prediction.get('tta_count')}, "
             f"top={top_log}",

@@ -64,9 +64,9 @@ export function useSignLanguage(
   const {
     modelType = 'cnn_gru',
     confidenceThreshold = 0.30,
-    windowSize = 16,
+    windowSize = 32,
     stableMinCount = 1,
-    captureIntervalMs = 120,
+    captureIntervalMs = 100,
     maxMissingFrames = 3,
   } = config
 
