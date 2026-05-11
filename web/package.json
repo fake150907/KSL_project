@@ -17,8 +17,6 @@
     "typescript": "^5.0.0"
   },
   "devDependencies": {
-    "@types/react-router-dom": "^5.3.3",
-    "@vitejs/plugin-basic-ssl": "^2.3.0",
     "@vitejs/plugin-react": "^4.0.0",
     "autoprefixer": "^10.5.0",
     "postcss": "^8.5.14",
