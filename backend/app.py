@@ -13,7 +13,11 @@ from typing import Any
 from flask import Flask, Response, jsonify, request, send_from_directory, session
 from flask_cors import CORS
 
-VISION_DISABLED = os.environ.get("DISABLE_VISION", "").lower() in {"1", "true", "yes"}
+VISION_DISABLED = (
+    os.environ.get("DISABLE_VISION", "").lower() in {"1", "true", "yes"}
+    or bool(os.environ.get("RAILWAY_ENVIRONMENT"))
+    or bool(os.environ.get("RAILWAY_SERVICE_ID"))
+)
 
 if VISION_DISABLED:
     np = None
