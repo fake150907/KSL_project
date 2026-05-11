@@ -10,6 +10,12 @@ __pycache__/
 *.log
 outputs/reports/
 
+# Local secrets/config
+.env
+.env.*
+backend/config.py
+!backend/config.example.py
+
 # Personal/team-lead notes
 TEAM_LEAD_REACT/
 

@@ -237,6 +237,91 @@ export function useSignLanguage(
     }
   }, [])
 
+  const createBlankFrameBlob = useCallback(async () => {
+    const canvas = canvasRef.current || document.createElement('canvas')
+    canvas.width = PREDICT_FRAME_WIDTH
+    canvas.height = PREDICT_FRAME_HEIGHT
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return null
+    ctx.fillStyle = '#000'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    return await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob((blob) => resolve(blob), 'image/jpeg', JPEG_QUALITY)
+    })
+  }, [])
+
+  const finalizeDemoSegment = useCallback(async () => {
+    if (!isDemoModeRef.current) return
+
+    const startedAt = Date.now()
+    while (isPredictingRef.current && Date.now() - startedAt < 700) {
+      await new Promise((resolve) => window.setTimeout(resolve, 40))
+    }
+
+    const blob = await createBlankFrameBlob()
+    if (!blob) return
+
+    isPredictingRef.current = true
+    try {
+      for (let i = 0; i < maxMissingFrames + 2; i += 1) {
+        const frameId = nextFrameIdRef.current + 1
+        nextFrameIdRef.current = frameId
+        latestFrameIdRef.current = frameId
+
+        const formData = new FormData()
+        formData.append('frame', blob)
+        formData.append('frame_id', frameId.toString())
+        formData.append('model_type', modelType === 'cnn_gru' ? 'sequence' : 'lstm')
+        formData.append('landmark_layout', 'mediapipe_xyz')
+        formData.append('client_id', clientIdRef.current)
+        formData.append('confidence_threshold', confidenceThreshold.toString())
+        formData.append('window_size', windowSize.toString())
+        formData.append('stable_min_count', stableMinCount.toString())
+        formData.append('max_missing_frames', maxMissingFrames.toString())
+        formData.append('min_segment_frames', '8')
+        formData.append('run_model', 'true')
+
+        const res = await fetch('/api/predict', { method: 'POST', body: formData })
+        const data = await res.json().catch(() => ({}))
+        const prediction = data.prediction
+        if (!prediction) continue
+
+        const pred: Prediction = {
+          label: prediction.label,
+          confidence: prediction.confidence,
+          timestamp: Date.now(),
+          has_hand: prediction.has_hand,
+          window_filled: prediction.window_filled,
+          window_progress: prediction.window_progress,
+          window_size: prediction.window_size,
+          missing_frames: prediction.missing_frames,
+          max_missing_frames: prediction.max_missing_frames,
+          top_predictions: prediction.top_predictions,
+        }
+        setCurrentPrediction(pred)
+
+        if (prediction.segment_finalized) {
+          if (pred.label && pred.confidence >= confidenceThreshold) {
+            commitRecognizedWord(pred.label)
+          }
+          break
+        }
+      }
+    } catch (err) {
+      console.error('Failed to finalize demo segment:', err)
+    } finally {
+      isPredictingRef.current = false
+    }
+  }, [
+    commitRecognizedWord,
+    confidenceThreshold,
+    createBlankFrameBlob,
+    maxMissingFrames,
+    modelType,
+    stableMinCount,
+    windowSize,
+  ])
+
   const stopCamera = useCallback(() => {
     const wasDemoMode = isDemoModeRef.current
     if (activeStreamRef.current) {
@@ -379,10 +464,12 @@ export function useSignLanguage(
     await playDemoClip(scenario, 0)
   }, [playDemoClip, stopCamera])
 
-  const handleDemoVideoEnded = useCallback(() => {
+  const handleDemoVideoEnded = useCallback(async () => {
     if (!isDemoModeRef.current || !demoScenarioRef.current) return
     const scenario = demoScenarioRef.current
     const nextClipIndex = demoClipIndexRef.current + 1
+
+    await finalizeDemoSegment()
 
     if (nextClipIndex < scenario.clips.length) {
       void playDemoClip(scenario, nextClipIndex)
@@ -403,7 +490,7 @@ export function useSignLanguage(
     setActiveDemoLabel('')
     setActiveDemoClipLabel('')
     clearLandmarkOverlay()
-  }, [clearLandmarkOverlay, commitRecognizedWord, convertDemoGlossToText, playDemoClip])
+  }, [clearLandmarkOverlay, commitRecognizedWord, convertDemoGlossToText, finalizeDemoSegment, playDemoClip])
 
   const drawLandmarks = useCallback((ctx: CanvasRenderingContext2D, landmarks: any) => {
     if (!landmarks) return

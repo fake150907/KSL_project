@@ -37,7 +37,11 @@ export default function PatientKiosk({
   
   const [isWaitingForDoctor, setIsWaitingForDoctor] = useState(sessionEnded)
   const [sendStatus, setSendStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+  const [sendStep, setSendStep] = useState<'summarizing' | 'sending' | ''>('')
   const [sendError, setSendError] = useState('')
+  const [hasKakaoToken, setHasKakaoToken] = useState(!!localStorage.getItem('KAKAO_ACCESS_TOKEN'))
+  const [logoutCountdown, setLogoutCountdown] = useState(15)
+  const [isCountingDown, setIsCountingDown] = useState(false)
   const [showPopup, setShowPopup] = useState(false)
   const [showDemoList, setShowDemoList] = useState(false)
   const [predictionLog, setPredictionLog] = useState<Array<{ label: string; confidence: number; timestamp: number }>>([])
@@ -203,6 +207,28 @@ export default function PatientKiosk({
     })
   }, [currentPrediction?.timestamp, currentPrediction?.window_filled, currentPrediction?.label, currentPrediction?.confidence, currentPrediction?.top_predictions])
 
+  useEffect(() => {
+    if (sendStatus === 'sent') {
+      setLogoutCountdown(15)
+      setIsCountingDown(true)
+    }
+  }, [sendStatus])
+
+  useEffect(() => {
+    if (!isCountingDown) return
+    if (logoutCountdown <= 0) {
+      localStorage.removeItem('KAKAO_ACCESS_TOKEN')
+      localStorage.removeItem('KAKAO_REFRESH_TOKEN')
+      setHasKakaoToken(false)
+      setIsCountingDown(false)
+      setShowPopup(false)
+      navigate('/kiosk')
+      return
+    }
+    const timer = setTimeout(() => setLogoutCountdown((prev) => prev - 1), 1000)
+    return () => clearTimeout(timer)
+  }, [logoutCountdown, isCountingDown, navigate])
+
   const predictionStatus = currentPrediction ? getPredictionStatus(currentPrediction) : ''
   const isRecognized = !!currentPrediction?.window_filled && !!currentPrediction?.label && (currentPrediction?.confidence ?? 0) >= 0.30
   const bannerLabel = isRecognized ? predictionStatus.replace('인식 중... ', '') : predictionStatus
@@ -264,6 +290,90 @@ export default function PatientKiosk({
     setSendStatus('error')
   }
 
+  const handleSendKakaoSummaryV2 = async () => {
+    const cleaned = actualPatientPhone.replace(/[^0-9]/g, '')
+    if (cleaned.length < 10) return
+    setSendStatus('sending')
+    setSendStep('summarizing')
+    setSendError('')
+
+    const conversation = buildClinicalSummaryInput()
+    const chatText = buildChatText()
+    const accessToken = localStorage.getItem('KAKAO_ACCESS_TOKEN') || ''
+    const refreshToken = localStorage.getItem('KAKAO_REFRESH_TOKEN') || ''
+    let summaryText = chatText
+
+    try {
+      const summaryRes = await fetch('/api/summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ conversation }),
+      })
+      if (summaryRes.ok) {
+        const summaryData = await summaryRes.json().catch(() => ({}))
+        summaryText = summaryData.summary || chatText
+      }
+
+      setSendStep('sending')
+      const res = await fetch('/api/notify/kakao', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ access_token: accessToken, refresh_token: refreshToken, summary: summaryText }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.error || '카카오톡 전송에 실패했습니다.')
+      }
+      if (data.access_token) { localStorage.setItem('KAKAO_ACCESS_TOKEN', data.access_token); setHasKakaoToken(true) }
+      if (data.refresh_token) localStorage.setItem('KAKAO_REFRESH_TOKEN', data.refresh_token)
+      setSendStep('')
+      setSendStatus('sent')
+      return
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : '카카오톡 전송에 실패했습니다.')
+    }
+
+    try {
+      await navigator.clipboard.writeText(`[수어 진료 요약본]\n전화번호: ${cleaned}\n\n${summaryText}`)
+    } catch {}
+    setSendStatus('error')
+  }
+
+  const handleKakaoLogin = () => {
+    sessionStorage.setItem('kakao_return_url', '/kiosk/session')
+    sessionStorage.setItem('kakao_return_patient', JSON.stringify({
+      name: actualPatientName,
+      phone: actualPatientPhone,
+    }))
+    const redirectUri = encodeURIComponent(`${window.location.origin}/kakao/callback`)
+    window.location.href = `/api/kakao/login?redirect_uri=${redirectUri}`
+  }
+
+  const handleAutoLogout = () => {
+    localStorage.removeItem('KAKAO_ACCESS_TOKEN')
+    localStorage.removeItem('KAKAO_REFRESH_TOKEN')
+    setHasKakaoToken(false)
+    setIsCountingDown(false)
+    setShowPopup(false)
+    navigate('/kiosk')
+  }
+
+  const handleKeepLogin = () => {
+    setIsCountingDown(false)
+    setShowPopup(false)
+    navigate('/kiosk')
+  }
+
+  const handleResend = () => {
+    setIsCountingDown(false)
+    setSendStatus('idle')
+    setSendStep('')
+    setSendError('')
+  }
+
+  const handleClosePopup = () => { setShowPopup(false); navigate('/kiosk') }
 const handleClosePopup = () => { 
     setShowPopup(false)
     onSessionReset?.()
@@ -430,6 +540,98 @@ const handleClosePopup = () => {
         </div>
       </div>
 
+        <footer className="shrink-0 h-[100px] flex items-center justify-center border-t border-slate-100 bg-white shadow-[0_-10px_40px_rgba(0,0,0,0.02)]">
+          <p className="text-[24px] text-slate-400 font-bold">수어로 증상을 표현해 주세요. 인공지능이 즉시 의사 선생님께 전달합니다.</p>
+        </footer>
+
+        {/* 진료 종료 팝업 (화이트) */}
+        {showPopup && (
+          <div className="absolute inset-0 flex items-center justify-center z-50 bg-slate-900/60 backdrop-blur-md">
+            <div className="w-[860px] bg-white border border-slate-100 rounded-[60px] px-16 pt-20 pb-16 flex flex-col items-center shadow-[0_40px_100px_rgba(0,0,0,0.2)]">
+              <div className="w-[130px] h-[130px] rounded-full bg-[#FEE500] flex items-center justify-center mb-8 shrink-0 shadow-xl shadow-yellow-100">
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="#3C1E1E"><path d="M12 3C6.477 3 2 6.477 2 10.8c0 2.8 1.718 5.253 4.286 6.72l-.857 3.2 3.715-2.457C10.012 18.41 10.99 18.6 12 18.6c5.523 0 10-3.477 10-7.8S17.523 3 12 3z"/></svg>
+              </div>
+              <h2 className="text-[52px] font-black text-slate-900 text-center leading-tight">진료를 마쳤습니다</h2>
+              <p className="text-[30px] text-slate-500 mt-4 text-center font-medium">등록하신 휴대전화로 진료 대화 내역을 보내드릴까요?</p>
+              
+              <div className="flex flex-col items-center justify-center rounded-[40px] mt-14 mb-10 w-full py-12 bg-slate-50 border-2 border-slate-100 shadow-inner">
+                <span className="text-[26px] text-slate-400 font-bold mb-4">{actualPatientName}님의 연락처</span>
+                <div className="text-[64px] font-black text-slate-800 tracking-[6px]">{formatPhone(actualPatientPhone)}</div>
+              </div>
+              
+              <div className="flex flex-col w-full gap-4">
+                {!hasKakaoToken ? (
+                  <button onClick={handleKakaoLogin} className="w-full h-[110px] rounded-[32px] text-[38px] font-black flex items-center justify-center gap-5 transition-all bg-[#FEE500] text-[#3C1E1E] hover:brightness-105 active:scale-[0.98] shadow-lg shadow-yellow-100">
+                    카카오 로그인 후 받기
+                  </button>
+                ) : (
+                  <button onClick={handleSendKakaoSummaryV2} disabled={sendStatus === 'sending' || actualPatientPhone.length < 10} className={`w-full h-[110px] rounded-[32px] text-[38px] font-black flex items-center justify-center gap-5 transition-all ${sendStatus === 'sending' || actualPatientPhone.length < 10 ? 'bg-slate-100 text-slate-300' : 'bg-[#FEE500] text-[#3C1E1E] hover:brightness-105 active:scale-[0.98] shadow-lg shadow-yellow-100'}`}>
+                    {sendStatus === 'sending' ? '전송하는 중...' : '카카오톡으로 받기'}
+                  </button>
+                )}
+                {sendStatus === 'error' && (
+                  <p className="rounded-3xl bg-red-50 px-8 py-5 text-center text-[22px] font-bold leading-snug text-red-600">
+                    {sendError || '카카오톡 전송 설정이 필요합니다. 대화 내용은 클립보드에 복사했습니다.'}
+                  </p>
+                )}
+                <button onClick={handleClosePopup} className="h-[90px] text-slate-400 text-[28px] font-bold hover:text-slate-600 transition-colors">아니요, 괜찮습니다</button>
+              </div>
+
+              {sendStatus === 'sending' && (
+                <div className="absolute inset-0 bg-white rounded-[60px] flex flex-col items-center justify-center p-16 animate-in fade-in duration-300">
+                  <div className="relative w-[150px] h-[150px] mb-10">
+                    <div className="absolute inset-0 rounded-full border-[10px] border-slate-100" />
+                    <div className="absolute inset-0 rounded-full border-[10px] border-[#FEE500] border-t-transparent animate-spin" />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <svg width="54" height="54" viewBox="0 0 24 24" fill="#3C1E1E"><path d="M12 3C6.477 3 2 6.477 2 10.8c0 2.8 1.718 5.253 4.286 6.72l-.857 3.2 3.715-2.457C10.012 18.41 10.99 18.6 12 18.6c5.523 0 10-3.477 10-7.8S17.523 3 12 3z"/></svg>
+                    </div>
+                  </div>
+                  <p className="text-[46px] font-black text-slate-900 mb-3">
+                    {sendStep === 'summarizing' ? 'AI 요약 생성 중' : '카카오톡 전송 중'}
+                  </p>
+                  <p className="text-[28px] text-slate-400 font-medium mb-14">잠시만 기다려 주세요...</p>
+                  <div className="flex flex-col w-full gap-4">
+                    <div className={`flex items-center gap-5 px-8 py-6 rounded-[28px] border-2 transition-all ${sendStep === 'summarizing' ? 'border-yellow-300 bg-yellow-50' : 'border-emerald-200 bg-emerald-50'}`}>
+                      <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${sendStep === 'summarizing' ? 'bg-yellow-200' : 'bg-emerald-500'}`}>
+                        {sendStep === 'summarizing' ? (
+                          <div className="w-5 h-5 rounded-full border-4 border-yellow-500 border-t-transparent animate-spin" />
+                        ) : (
+                          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3.5"><polyline points="20 6 9 17 4 12"/></svg>
+                        )}
+                      </div>
+                      <span className={`text-[28px] font-black ${sendStep === 'summarizing' ? 'text-yellow-700' : 'text-emerald-700'}`}>1단계. AI 진료 내용 요약</span>
+                    </div>
+                    <div className={`flex items-center gap-5 px-8 py-6 rounded-[28px] border-2 transition-all ${sendStep === 'sending' ? 'border-yellow-300 bg-yellow-50' : 'border-slate-200 bg-slate-50'}`}>
+                      <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${sendStep === 'sending' ? 'bg-yellow-200' : 'bg-slate-200'}`}>
+                        {sendStep === 'sending' ? (
+                          <div className="w-5 h-5 rounded-full border-4 border-yellow-500 border-t-transparent animate-spin" />
+                        ) : (
+                          <span className="text-[22px] font-black text-slate-400">2</span>
+                        )}
+                      </div>
+                      <span className={`text-[28px] font-black ${sendStep === 'sending' ? 'text-yellow-700' : 'text-slate-400'}`}>2단계. 카카오톡 나에게 보내기</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {sendStatus === 'sent' && (
+                <div className="absolute inset-0 bg-white rounded-[60px] flex flex-col items-center justify-center p-16 animate-in fade-in duration-500">
+                  <div className="w-[160px] h-[140px] bg-emerald-500 rounded-full flex items-center justify-center mb-10 shadow-lg shadow-emerald-100">
+                    <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3.5"><polyline points="20 6 9 17 4 12"/></svg>
+                  </div>
+                  <p className="text-[54px] font-black text-slate-900 mb-4">전송 완료!</p>
+                  <p className="text-[30px] text-slate-500 text-center leading-relaxed font-medium">입력하신 번호로 카카오톡 메시지를 보내드렸습니다.<br/>진료실을 나가셔도 좋습니다.</p>
+                  <div className="mt-8 flex items-center justify-center gap-3 rounded-3xl bg-slate-50 px-10 py-5 border border-slate-100">
+                    <span className="text-[60px] font-black text-red-500 tabular-nums w-[90px] text-center">{logoutCountdown}</span>
+                    <span className="text-[26px] font-bold text-slate-500 leading-snug">초 후<br/>자동 로그아웃</span>
+                  </div>
+                  <div className="mt-8 flex w-full gap-4">
+                    <button onClick={handleResend} className="flex-1 h-[100px] rounded-[28px] text-[30px] font-black bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all active:scale-95">재전송하기</button>
+                    <button onClick={handleKeepLogin} className="flex-1 h-[100px] rounded-[28px] text-[30px] font-black bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition-all active:scale-95">로그인 유지</button>
+                  </div>
+                  <button onClick={handleAutoLogout} className="mt-4 w-full h-[100px] rounded-[28px] text-[30px] font-black bg-red-500 text-white hover:bg-red-600 shadow-lg shadow-red-100 transition-all active:scale-95">지금 로그아웃</button>
+                </div>
       {showPopup && (
         <div className="absolute inset-0 flex items-center justify-center z-50 bg-slate-900/60 backdrop-blur-sm p-4">
           <div className="w-full max-w-sm bg-white border border-slate-100 rounded-3xl px-6 pt-6 pb-6 flex flex-col items-center shadow-2xl relative">
