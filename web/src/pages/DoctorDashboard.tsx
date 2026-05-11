@@ -1,9 +1,9 @@
-import { useRef, useEffect, useState } from 'react'
+import { useRef, useEffect, useState, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import type { ChatMessage as ChatMessageType, DoctorNote } from '../types'
 import ChatMessage from '../components/ChatMessage'
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition'
-import { socket } from '../socket'
+import { socket, registerRole } from '../socket'
 
 interface DoctorDashboardProps {
   messages: ChatMessageType[]
@@ -24,6 +24,27 @@ const TAG_STYLES: Record<DoctorNote['tag'], string> = {
 
 const VOICE_BAR_COLORS = ['#F0ABFC', '#93C5FD', '#86EFAC', '#FDE68A', '#C4B5FD', '#67E8F9']
 
+// TURN 서버 포함 ICE 설정 (모바일 연결 필수)
+const ICE_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  {
+    urls: 'turn:openrelay.metered.ca:80',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+]
+
 export default function DoctorDashboard({
   messages,
   onNewMessage,
@@ -37,7 +58,7 @@ export default function DoctorDashboard({
   const navigate = useNavigate()
   const location = useLocation()
   const chatEndRef = useRef<HTMLDivElement>(null)
-  
+
   const navState = location.state as { patientData?: { name: string, dob: string, gender: string, phone: string } } | null
   const actualPatientName = propPatientName || navState?.patientData?.name || '익명 환자'
   const actualPatientDob = propPatientDob || navState?.patientData?.dob || '생년월일 미상'
@@ -55,40 +76,97 @@ export default function DoctorDashboard({
   const [showEndConfirm, setShowEndConfirm] = useState(false)
   const [sessionDone, setSessionDone] = useState(false)
 
-  const { isActive: isSpeechActive, voiceLevels, start: startSpeech, stop: stopSpeech } = useSpeechRecognition(onNewMessage)
+  const handleSpeechMessage = useCallback((msg: ChatMessageType) => {
+    onNewMessage(msg)
+    socket.emit('chat_message', msg)
+  }, [onNewMessage])
+
+  const { isActive: isSpeechActive, voiceLevels, start: startSpeech, stop: stopSpeech } = useSpeechRecognition(handleSpeechMessage)
+
+  useEffect(() => {
+    registerRole('doctor')
+  }, [])
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  // ✅ 수정됨: 환자가 보낸 채팅 메시지 수신
   useEffect(() => {
-    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
+    const handleIncomingMessage = (msg: ChatMessageType) => {
+      onNewMessage(msg)
+    }
+    socket.on('chat_message', handleIncomingMessage)
+    return () => {
+      socket.off('chat_message', handleIncomingMessage)
+    }
+  }, [onNewMessage])
+
+  useEffect(() => {
+    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS })
     peerConnectionRef.current = pc
+    const pendingCandidates: RTCIceCandidateInit[] = []
+    let remoteDescriptionReady = false
+
+    const flushPendingCandidates = async () => {
+      while (pendingCandidates.length > 0 && pc.signalingState !== 'closed') {
+        const candidate = pendingCandidates.shift()
+        if (candidate) {
+          await pc.addIceCandidate(new RTCIceCandidate(candidate))
+        }
+      }
+    }
+
     pc.ontrack = (event) => {
       if (remoteVideoRef.current && event.streams[0]) {
         remoteVideoRef.current.srcObject = event.streams[0]
         setPatientVideoConnected(true)
       }
     }
+
     pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') setPatientVideoConnected(false)
-    }
-    pc.onicecandidate = (event) => {
-      if (event.candidate) socket.emit('webrtc_ice_candidate', { target: 'patient', candidate: event.candidate })
-    }
-    const handleOffer = async (data: any) => {
-      if (pc.signalingState !== 'closed') {
-        await pc.setRemoteDescription(new RTCSessionDescription(data.offer))
-        const answer = await pc.createAnswer()
-        await pc.setLocalDescription(answer)
-        socket.emit('webrtc_answer', { target: 'patient', answer })
+      if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+        setPatientVideoConnected(false)
       }
     }
-    const handleCandidate = async (data: any) => {
-      if (data.candidate && pc.signalingState !== 'closed') await pc.addIceCandidate(new RTCIceCandidate(data.candidate))
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        socket.emit('webrtc_ice_candidate', { target: 'kiosk', candidate: event.candidate })
+      }
     }
+
+    const handleOffer = async (data: { offer: RTCSessionDescriptionInit }) => {
+      if (pc.signalingState === 'closed') return
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.offer))
+        remoteDescriptionReady = true
+        await flushPendingCandidates()
+        const answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
+        socket.emit('webrtc_answer', { target: 'kiosk', answer })
+      } catch (err) {
+        console.error('Offer 처리 실패:', err)
+      }
+    }
+
+    const handleCandidate = async (data: { candidate: RTCIceCandidateInit }) => {
+      if (data.candidate && pc.signalingState !== 'closed') {
+        try {
+          if (remoteDescriptionReady) {
+            await pc.addIceCandidate(new RTCIceCandidate(data.candidate))
+          } else {
+            pendingCandidates.push(data.candidate)
+          }
+        } catch (err) {
+          console.error('ICE candidate 추가 실패:', err)
+        }
+      }
+    }
+
     socket.on('webrtc_offer', handleOffer)
     socket.on('webrtc_ice_candidate', handleCandidate)
+
     return () => {
       pc.close()
       socket.off('webrtc_offer', handleOffer)
@@ -106,10 +184,19 @@ export default function DoctorDashboard({
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); addNote() }
   }
 
+  // ✅ 수정됨: 메시지 전송 시 socket.emit 추가
   const sendChatMessage = () => {
     const text = chatInput.trim()
     if (!text) return
-    onNewMessage({ id: `${Date.now()}-${Math.random()}`, sender: 'doctor', text: text, timestamp: new Date(), label: '의사' })
+    const msg: ChatMessageType = {
+      id: `${Date.now()}-${Math.random()}`,
+      sender: 'doctor',
+      text,
+      timestamp: new Date(),
+      label: '의사',
+    }
+    onNewMessage(msg)                        // 자기 화면 업데이트
+    socket.emit('chat_message', msg)         // ✅ 환자에게 전송
     setChatInput('')
   }
   const handleChatKeyDown = (e: React.KeyboardEvent) => {
@@ -128,13 +215,18 @@ export default function DoctorDashboard({
         patientDob: actualPatientDob,
         patientGender: actualPatientGender,
         patientPhone: actualPatientPhone,
-        notes: notes, 
+        notes,
       }
       localStorage.setItem('medical_records', JSON.stringify([newRecord, ...existingRecords]))
     } catch (e) {
-      console.error("기록 저장 실패", e)
+      console.error('기록 저장 실패', e)
     }
-    stopSpeech(); onSessionEnd(); setSessionDone(true); setShowEndConfirm(false); navigate('/doctor/launch')
+    stopSpeech()
+    onSessionEnd()
+    socket.emit('session_end')
+    setSessionDone(true)
+    setShowEndConfirm(false)
+    navigate('/doctor/launch')
   }
 
   const handleNewSession = () => { setSessionDone(false); setNotes([]); onSessionReset() }
@@ -145,26 +237,36 @@ export default function DoctorDashboard({
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 flex-shrink-0 bg-white">
         <div className="flex items-center gap-3">
           <span className="text-lg font-bold text-slate-800">
-            진료 대시보드 - {actualPatientName} 환자 <span className="text-sm text-slate-500 font-normal ml-2">({actualPatientGender}, {actualPatientDob})</span>
+            진료 대시보드 - {actualPatientName} 환자
+            <span className="text-sm text-slate-500 font-normal ml-2">({actualPatientGender}, {actualPatientDob})</span>
           </span>
         </div>
         <div className="flex items-center gap-4">
           {sessionDone ? (
             <>
-              <span className="flex items-center gap-2 text-sm font-semibold text-slate-400"><span className="w-2 h-2 rounded-full bg-slate-300" /> 진료 종료됨</span>
-              <button onClick={handleNewSession} className="px-4 py-2 rounded-lg text-sm font-bold bg-blue-50 border border-blue-200 text-blue-600 hover:bg-blue-100">새 진료 시작</button>
+              <span className="flex items-center gap-2 text-sm font-semibold text-slate-400">
+                <span className="w-2 h-2 rounded-full bg-slate-300" /> 진료 종료됨
+              </span>
+              <button onClick={handleNewSession} className="px-4 py-2 rounded-lg text-sm font-bold bg-blue-50 border border-blue-200 text-blue-600 hover:bg-blue-100">
+                새 진료 시작
+              </button>
             </>
           ) : (
             <>
-              <span className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" /> <span className="text-sm font-semibold text-blue-600">진료 중</span></span>
-              <button onClick={() => setShowEndConfirm(true)} className="px-4 py-2 rounded-lg text-sm font-bold bg-red-50 border border-red-200 text-red-600 hover:bg-red-100">진료 끝내기</button>
+              <span className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                <span className="text-sm font-semibold text-blue-600">진료 중</span>
+              </span>
+              <button onClick={() => setShowEndConfirm(true)} className="px-4 py-2 rounded-lg text-sm font-bold bg-red-50 border border-red-200 text-red-600 hover:bg-red-100">
+                진료 끝내기
+              </button>
             </>
           )}
         </div>
       </div>
 
       <div className="flex flex-1 min-h-0">
-        {/* 사이드바: 영상 및 메모 */}
+        {/* 사이드바: 환자 영상 + 메모 */}
         <div className="w-[400px] flex-shrink-0 flex flex-col border-r border-slate-200 bg-slate-50/50 overflow-hidden">
           <div className="p-4">
             <div className="flex items-center justify-between mb-3">
@@ -174,10 +276,19 @@ export default function DoctorDashboard({
               </span>
             </div>
             <div className="aspect-video bg-slate-900 rounded-2xl overflow-hidden shadow-inner relative">
-              <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" style={{ display: patientVideoConnected ? 'block' : 'none', transform: 'scaleX(-1)' }} />
+              <video
+                ref={remoteVideoRef}
+                autoPlay
+                playsInline
+                className="w-full h-full object-cover"
+                style={{ display: patientVideoConnected ? 'block' : 'none', transform: 'scaleX(-1)' }}
+              />
               {!patientVideoConnected && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-slate-600">
-                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <polygon points="23 7 16 12 23 17 23 7"/>
+                    <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+                  </svg>
                   <span className="text-xs font-medium text-center">환자 카메라 대기 중</span>
                 </div>
               )}
@@ -191,8 +302,18 @@ export default function DoctorDashboard({
               <span className="text-xs text-slate-400">{notes.length}개</span>
             </div>
             <div className="flex gap-2 mb-3">
-              <input value={noteInput} onChange={(e) => setNoteInput(e.target.value)} onKeyDown={handleNoteKeyDown} placeholder="메모 입력..." className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-400" />
-              <select value={noteTag} onChange={(e) => setNoteTag(e.target.value as DoctorNote['tag'])} className="bg-white border border-slate-200 rounded-xl px-2 text-xs text-slate-600 outline-none"><option value="증상">증상</option><option value="관찰">관찰</option><option value="처방">처방</option></select>
+              <input
+                value={noteInput}
+                onChange={(e) => setNoteInput(e.target.value)}
+                onKeyDown={handleNoteKeyDown}
+                placeholder="메모 입력..."
+                className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-400"
+              />
+              <select value={noteTag} onChange={(e) => setNoteTag(e.target.value as DoctorNote['tag'])} className="bg-white border border-slate-200 rounded-xl px-2 text-xs text-slate-600 outline-none">
+                <option value="증상">증상</option>
+                <option value="관찰">관찰</option>
+                <option value="처방">처방</option>
+              </select>
               <button onClick={addNote} className="w-9 h-9 flex items-center justify-center rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700">+</button>
             </div>
             <div className="flex-1 overflow-y-auto flex flex-col gap-2">
@@ -209,7 +330,7 @@ export default function DoctorDashboard({
           </div>
         </div>
 
-        {/* 채팅 영역 */}
+        {/* 채팅 */}
         <div className="flex-1 flex flex-col min-w-0 bg-white">
           <div className="flex-1 overflow-y-auto px-6 py-6 flex flex-col gap-4">
             {messages.length === 0 ? (
@@ -227,14 +348,27 @@ export default function DoctorDashboard({
             <div className="p-4 border-t border-slate-100 bg-slate-50/30">
               {isSpeechActive && (
                 <div className="h-10 flex items-end gap-1 px-4 mb-3">
-                  {voiceLevels.map((l, i) => <div key={i} className="flex-1 rounded-full transition-all" style={{ height: `${Math.round(l * 100)}%`, minHeight: '10%', background: l > 0.2 ? VOICE_BAR_COLORS[i % 6] : '#E2E8F0' }} />)}
+                  {voiceLevels.map((l, i) => (
+                    <div key={i} className="flex-1 rounded-full transition-all" style={{ height: `${Math.round(l * 100)}%`, minHeight: '10%', background: l > 0.2 ? VOICE_BAR_COLORS[i % 6] : '#E2E8F0' }} />
+                  ))}
                 </div>
               )}
               <div className="flex items-center gap-3">
-                <input value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={handleChatKeyDown} placeholder="환자에게 전달할 메시지 입력..." className="flex-1 bg-white border border-slate-200 rounded-2xl px-5 py-3 text-sm text-slate-900 outline-none focus:border-blue-500 shadow-sm" />
-                <button onClick={sendChatMessage} disabled={!chatInput.trim()} className="px-6 py-3 rounded-2xl bg-blue-600 text-white font-bold text-sm disabled:opacity-30 hover:bg-blue-700 shadow-md">전송</button>
+                <input
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={handleChatKeyDown}
+                  placeholder="환자에게 전달할 메시지 입력..."
+                  className="flex-1 bg-white border border-slate-200 rounded-2xl px-5 py-3 text-sm text-slate-900 outline-none focus:border-blue-500 shadow-sm"
+                />
+                <button onClick={sendChatMessage} disabled={!chatInput.trim()} className="px-6 py-3 rounded-2xl bg-blue-600 text-white font-bold text-sm disabled:opacity-30 hover:bg-blue-700 shadow-md">
+                  전송
+                </button>
               </div>
-              <button onClick={isSpeechActive ? stopSpeech : startSpeech} className={`w-full mt-3 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-xl transition-all ${isSpeechActive ? 'bg-amber-50 text-amber-600 border border-amber-200' : 'bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200'}`}>
+              <button
+                onClick={isSpeechActive ? stopSpeech : startSpeech}
+                className={`w-full mt-3 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-xl transition-all ${isSpeechActive ? 'bg-amber-50 text-amber-600 border border-amber-200' : 'bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200'}`}
+              >
                 {isSpeechActive ? '음성 인식 중지' : '마이크 켜기 (음성 인식)'}
               </button>
             </div>
