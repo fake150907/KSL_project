@@ -1,0 +1,16 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://kslproject.vercel.app/api/:path*"
+    },
+    {
+      "source": "/video_feed",
+      "destination": "https://kslproject.vercel.app/video_feed"
+    },
+    {
+      "source": "/validation_demos/:path*",
+      "destination": "https://kslproject.vercel.app/validation_demos/:path*"
+    }
+  ]
+}
