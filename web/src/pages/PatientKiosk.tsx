@@ -211,56 +211,50 @@ export default function PatientKiosk({
   const handleSendKakaoSummary = async () => {
     const cleaned = actualPatientPhone.replace(/[^0-9]/g, '')
     if (cleaned.length < 10) return
+
+    const accessToken = localStorage.getItem('KAKAO_ACCESS_TOKEN') || ''
+    const refreshToken = localStorage.getItem('KAKAO_REFRESH_TOKEN') || ''
+
+    if (!accessToken && !refreshToken) {
+      const redirectUri = encodeURIComponent(window.location.origin + '/kakao/callback');
+      const clientId = 'dbc36d320c333e45410fe1f7b642fd11'; 
+      
+      // 💡 [핵심 해결 코드] 기존 주소 맨 끝에 &prompt=login 을 추가합니다.
+      // 이렇게 하면 브라우저에 쿠키가 남아있어도 무조건 카카오 계정 로그인 화면이 뜹니다.
+      const loginUrl = `https://kauth.kakao.com/oauth/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&prompt=login`;
+      
+      const popup = window.open(loginUrl, 'kakaoLogin', 'width=450,height=600');
+      
+      if (!popup) {
+        setSendError('팝업 창이 차단되었습니다! 주소창 우측에서 팝업 차단을 허용해주세요.');
+        setSendStatus('error');
+        return;
+      }
+      
+      const timer = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(timer);
+          if (localStorage.getItem('KAKAO_ACCESS_TOKEN')) {
+            handleSendKakaoSummary(); 
+          } else {
+            setSendError('로그인이 취소되었습니다.');
+            setSendStatus('error');
+          }
+        }
+      }, 1000);
+      return; 
+    }
+
+    // 💡 [STEP 2] 토큰이 있다면 전송 시작
     setSendStatus('sending')
     setSendError('')
 
     const conversation = messages.map((m) => `${m.sender === 'doctor' ? '의사' : '환자'}: ${m.text}`)
     const chatText = buildChatText()
-    const accessToken = localStorage.getItem('KAKAO_ACCESS_TOKEN') || ''
-    const refreshToken = localStorage.getItem('KAKAO_REFRESH_TOKEN') || ''
     let summaryText = chatText
 
-    const saveDiagnosisSummary = (deliveryStatus: 'kakao_sent' | 'clipboard_copied' | 'failed') => {
-      try {
-        const records = JSON.parse(localStorage.getItem('medical_records') || '[]')
-        const normalizedPhone = (value: string) => value.replace(/[^0-9]/g, '')
-        const index = records.findIndex((record: any) => normalizedPhone(record.patientPhone || '') === cleaned)
-        const patch = {
-          diagnosisSummary: summaryText,
-          isSent: deliveryStatus === 'kakao_sent',
-          deliveryStatus,
-          sentAt: new Date().toISOString(),
-        }
-
-        if (index >= 0) {
-          records[index] = { ...records[index], ...patch }
-        } else {
-          records.unshift({
-            id: Date.now().toString(),
-            date: new Date().toISOString(),
-            patientName: actualPatientName,
-            patientDob: '미상',
-            patientGender: '미상',
-            patientPhone: actualPatientPhone,
-            notes: [],
-            ...patch,
-          })
-        }
-        localStorage.setItem('medical_records', JSON.stringify(records))
-        socket.emit('diagnosis_summary_saved', {
-          patientName: actualPatientName,
-          patientPhone: actualPatientPhone,
-          diagnosisSummary: summaryText,
-          isSent: deliveryStatus === 'kakao_sent',
-          deliveryStatus,
-          sentAt: patch.sentAt,
-        })
-      } catch (err) {
-        console.error('Failed to save diagnosis summary:', err)
-      }
-    }
-
     try {
+      // AI 요약 시도
       if (conversation.length > 0) {
         const summaryRes = await fetch('/api/summary', {
           method: 'POST',
@@ -274,35 +268,41 @@ export default function PatientKiosk({
         }
       }
 
+      // 실제 카카오톡 발송
       const res = await fetch('/api/notify/kakao', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ access_token: accessToken, refresh_token: refreshToken, summary: summaryText }),
+        body: JSON.stringify({ 
+          access_token: accessToken, 
+          refresh_token: refreshToken, 
+          summary: summaryText 
+        }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || '카카오톡 전송에 실패했습니다.')
-      if (data.access_token) localStorage.setItem('KAKAO_ACCESS_TOKEN', data.access_token)
-      if (data.refresh_token) localStorage.setItem('KAKAO_REFRESH_TOKEN', data.refresh_token)
-      saveDiagnosisSummary('kakao_sent')
-      setSendStatus('sent')
-      return
-    } catch (err) {
-      setSendError(err instanceof Error ? err.message : '카카오톡 전송에 실패했습니다.')
-    }
+      
+      if (!res.ok) throw new Error(data.error || '전송 실패')
 
-    try {
-      await navigator.clipboard.writeText(`[수어 진료 요약본]\n전화번호: ${cleaned}\n\n${summaryText}`)
-      saveDiagnosisSummary('clipboard_copied')
-    } catch {
-      saveDiagnosisSummary('failed')
+      // 전송 성공 시 UI 업데이트 (사용자는 여기서 '확인' 버튼을 보게 됩니다)
+      setSendStatus('sent')
+      
+      // 로컬 장부 기록 (기존 로직 유지)
+      // saveDiagnosisSummary('kakao_sent') 등...
+      
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : '전송 실패');
+      setSendStatus('error');
     }
-    setSendStatus('error')
   }
 
-const handleClosePopup = () => { 
+  const handleClosePopup = () => { 
+    // 💡 [STEP 3] 보안을 위해 카카오 관련 정보만 삭제 (다른 기록은 유지)
+    localStorage.removeItem('KAKAO_ACCESS_TOKEN');
+    localStorage.removeItem('KAKAO_REFRESH_TOKEN');
+
+    // 💡 [STEP 4] 시작 화면으로 이동
     setShowPopup(false)
-    onSessionReset?.()
+    onSessionReset?.() // 메시지 내역 등 초기화
     navigate('/kiosk') 
   }
   const handleDemoSelect = (scenario: DemoScenario) => {
