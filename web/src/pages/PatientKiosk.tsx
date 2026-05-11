@@ -201,6 +201,23 @@ export default function PatientKiosk({
     return messages.map((m) => `[${m.timestamp.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}] ${m.sender === 'doctor' ? '의사' : '환자'}: ${m.text}`).join('\n')
   }
 
+  const buildClinicalSummaryInput = () => {
+    const conversation = messages.map((m) => {
+      const speaker = m.sender === 'doctor' ? 'doctor' : 'patient'
+      const time = m.timestamp.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+      return `[${time}] ${speaker}: ${m.text}`
+    })
+
+    conversation.unshift(`patient_name: ${actualPatientName}`)
+    conversation.unshift(`patient_phone: ${actualPatientPhone}`)
+
+    if (messages.length === 0) {
+      conversation.push('no conversation messages')
+    }
+
+    return conversation
+  }
+
   const formatPhone = (val: string) => {
     const digits = val.replace(/[^0-9]/g, '').slice(0, 11)
     if (digits.length <= 3) return digits
