@@ -103,6 +103,8 @@ sequence_labels: dict[str, list[str]] = {}
 mp_holistic: Any = None
 mp_holistic_instance: Any = None
 mp_holistic_lock = threading.Lock()
+model_load_lock = threading.Lock()
+model_load_attempted = False
 mp_drawing: Any = None
 
 
@@ -217,6 +219,17 @@ def load_models() -> None:
                 print(f"Loaded {model_key} model from {path}")
         except Exception as exc:
             print(f"Failed to load {model_key} model from {path}: {exc}")
+
+
+def ensure_models_loaded() -> None:
+    global model_load_attempted
+    if model_load_attempted:
+        return
+    with model_load_lock:
+        if model_load_attempted:
+            return
+        load_models()
+        model_load_attempted = True
 
 
 def get_session_window(client_id: str) -> list[np.ndarray]:
@@ -423,6 +436,11 @@ def health():
     return jsonify({"status": "ok"}), 200
 
 
+@app.route("/", methods=["GET"])
+def root():
+    return jsonify({"status": "ok", "service": "ksl-backend"}), 200
+
+
 @app.route("/api/gloss_to_text", methods=["POST"])
 def api_gloss_to_text():
     data = request.get_json(force=True, silent=True) or {}
@@ -542,6 +560,7 @@ def predict():
     session.modified = False
     request_started_at = time.perf_counter()
     try:
+        ensure_models_loaded()
         if cv2 is None or Image is None or mp is None or torch is None or mediapipe_landmarks_to_frame is None or sequence_to_tensor is None:
             return jsonify({"error": "Vision dependencies are not installed"}), 503
         if mp_holistic_instance is None:
