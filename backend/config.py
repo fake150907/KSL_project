@@ -21,5 +21,4 @@ class Config:
 
     # Standard name first, plus the misspelled variant mentioned during handoff.
     ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTROPIC_API_KEY", "")
-    # 💡 최신 모델인 claude-sonnet-4-20250514로 기본값 업데이트
-    ANTHROPIC_MODEL: str = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+    ANTHROPIC_MODEL: str = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
