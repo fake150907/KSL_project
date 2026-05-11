@@ -25,10 +25,17 @@ export default function HangulKeyboard({ value, onChange }: HangulKeyboardProps)
   useEffect(() => {
     if (!value) {
       setJamoBuffer([])
-    } else if (value && jamoBuffer.length === 0) {
-      setJamoBuffer(Hangul.disassemble(value))
+    } else {
+      // 💡 현재 버퍼를 조합한 결과와 외부에서 들어온 value를 비교합니다.
+      const assembled = Hangul.assemble(jamoBuffer)
+      
+      // 두 값이 다를 때만(외부 주입 또는 초기 렌더링 시) 분해하여 버퍼에 넣습니다.
+      if (value !== assembled) {
+        setJamoBuffer(Hangul.disassemble(value))
+      }
     }
-  }, [value, jamoBuffer.length])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]) // 💡 jamoBuffer 관련 항목을 제거하여 내부 상태 변경에 의한 루프를 차단합니다.
 
   const handleKeyPress = (key: string) => {
     if (key === 'Shift') { setIsShift(!isShift); return }
@@ -51,6 +58,7 @@ export default function HangulKeyboard({ value, onChange }: HangulKeyboardProps)
 
   return (
     <div className="flex flex-col gap-3 w-full max-w-[720px] items-center">
+      {/* 화면 렌더링 코드는 기존과 동일하므로 생략 없이 유지합니다. */}
       <div className="w-full h-[60px] md:h-[80px] px-4 md:px-6 flex items-center rounded-xl md:rounded-2xl mb-1 md:mb-2 bg-slate-50 border border-slate-200 shadow-inner">
         <span className="text-xl md:text-3xl font-black tracking-widest text-slate-900">
           {value}
