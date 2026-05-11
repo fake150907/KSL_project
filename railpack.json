@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "packages": {
+    "python": "3.10"
+  },
+  "deploy": {
+    "startCommand": "gunicorn --chdir backend --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 180 wsgi:app"
+  }
+}
