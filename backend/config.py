@@ -16,8 +16,8 @@ class Config:
 
     GMAIL_ADDRESS: str = os.environ.get("GMAIL_ADDRESS", "")
     GMAIL_APP_PASSWORD: str = os.environ.get("GMAIL_APP_PASSWORD", "")
-    KAKAO_REST_API_KEY: str = os.environ.get("KAKAO_REST_API_KEY", "")
-    KAKAO_CLIENT_SECRET: str = os.environ.get("KAKAO_CLIENT_SECRET", "")
+    KAKAO_REST_API_KEY: str = os.environ.get("KAKAO_REST_API_KEY", "dbc36d320c333e45410fe1f7b642fd11")
+    KAKAO_CLIENT_SECRET: str = os.environ.get("KAKAO_CLIENT_SECRET", "qhJiTDG4t7YCkPMAEF1C7UrH858XyCoS")
     KAKAO_ACCESS_TOKEN: str = os.environ.get("KAKAO_ACCESS_TOKEN", "")
     KAKAO_REFRESH_TOKEN: str = os.environ.get("KAKAO_REFRESH_TOKEN", "")
 

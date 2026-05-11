@@ -461,6 +461,21 @@ def api_gloss_to_text():
     return jsonify({"gloss": gloss, "text": result}), 200
 
 
+@app.route("/api/kakao/login", methods=["GET"])
+def kakao_login():
+    from urllib.parse import urlencode
+    from flask import redirect as flask_redirect
+
+    redirect_uri = request.args.get("redirect_uri", "")
+    if not Config.KAKAO_REST_API_KEY:
+        return jsonify({"error": "KAKAO_REST_API_KEY가 설정되어 있지 않습니다."}), 500
+    if not redirect_uri:
+        return jsonify({"error": "redirect_uri가 필요합니다."}), 400
+
+    params = urlencode({"client_id": Config.KAKAO_REST_API_KEY, "redirect_uri": redirect_uri, "response_type": "code"})
+    return flask_redirect(f"https://kauth.kakao.com/oauth/authorize?{params}")
+
+
 @app.route("/api/kakao/token", methods=["POST"])
 def kakao_token():
     data = request.get_json(silent=True) or {}
@@ -494,7 +509,8 @@ def kakao_token():
         )
         result = response.json()
         if response.status_code != 200:
-            return jsonify({"error": result}), response.status_code
+            error_msg = result.get("error_description") or result.get("msg") or result.get("error") or str(result)
+            return jsonify({"error": str(error_msg)}), response.status_code
         return jsonify(
             {
                 "access_token": result.get("access_token"),
