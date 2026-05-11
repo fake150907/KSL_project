@@ -13,30 +13,39 @@ from typing import Any
 from flask import Flask, Response, jsonify, request, send_from_directory, session
 from flask_cors import CORS
 
-try:
-    import numpy as np
-except ImportError:
+VISION_DISABLED = os.environ.get("DISABLE_VISION", "").lower() in {"1", "true", "yes"}
+
+if VISION_DISABLED:
     np = None
-
-try:
-    import cv2
-except ImportError:
     cv2 = None
-
-try:
-    import mediapipe as mp
-except ImportError:
     mp = None
-
-try:
-    import torch
-except ImportError:
     torch = None
-
-try:
-    from PIL import Image
-except ImportError:
     Image = None
+else:
+    try:
+        import numpy as np
+    except ImportError:
+        np = None
+
+    try:
+        import cv2
+    except ImportError:
+        cv2 = None
+
+    try:
+        import mediapipe as mp
+    except ImportError:
+        mp = None
+
+    try:
+        import torch
+    except ImportError:
+        torch = None
+
+    try:
+        from PIL import Image
+    except ImportError:
+        Image = None
 
 os.environ.setdefault("MPLCONFIGDIR", str(Path(__file__).resolve().parents[1] / ".matplotlib"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -48,14 +57,19 @@ from src.services.gloss_to_text_service import gloss_to_text
 from src.utils.config import load_config
 from summary.routes import summary_bp
 
-try:
-    from src.data.keypoint_utils import mediapipe_landmarks_to_frame, sequence_to_tensor
-    from src.models.model_sequence import build_sequence_model
-except ImportError as exc:
-    print(f"Optional vision imports failed: {exc}")
+if VISION_DISABLED:
     mediapipe_landmarks_to_frame = None
     sequence_to_tensor = None
     build_sequence_model = None
+else:
+    try:
+        from src.data.keypoint_utils import mediapipe_landmarks_to_frame, sequence_to_tensor
+        from src.models.model_sequence import build_sequence_model
+    except ImportError as exc:
+        print(f"Optional vision imports failed: {exc}")
+        mediapipe_landmarks_to_frame = None
+        sequence_to_tensor = None
+        build_sequence_model = None
 
 
 app = Flask(__name__)
