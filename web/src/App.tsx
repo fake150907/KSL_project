@@ -42,6 +42,7 @@ export default function App() {
   const seenIds = useRef<Set<string>>(new Set())
   const channelRef = useRef<BroadcastChannel | null>(null)
 
+  // 1. 초기 데이터 로드
   useEffect(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY)
@@ -57,6 +58,19 @@ export default function App() {
     }
   }, [])
 
+  // 💡 2. 디바운스(Debounce)를 활용한 스토리지 저장 최적화
+  useEffect(() => {
+    if (messages.length === 0) return // 빈 배열일 때는 불필요한 저장 생략
+
+    const timerId = setTimeout(() => {
+      localStorage.setItem(STORAGE_KEY, serializeMessages(messages))
+    }, 500) // 500ms 동안 새 메시지가 없으면 최종본 1회 저장
+
+    // 500ms가 지나기 전에 새 메시지가 오면 기존 타이머 취소 (금고 넣기 보류)
+    return () => clearTimeout(timerId)
+  }, [messages])
+
+  // 3. 브로드캐스트 채널 설정
   useEffect(() => {
     const channel = new BroadcastChannel(CHANNEL_NAME)
     channelRef.current = channel
@@ -67,11 +81,9 @@ export default function App() {
         const incoming = normalizeMessage(payload as IncomingChatMessage)
         if (seenIds.current.has(incoming.id)) return
         seenIds.current.add(incoming.id)
-        setMessages((prev) => {
-          const next = [...prev, incoming]
-          localStorage.setItem(STORAGE_KEY, serializeMessages(next))
-          return next
-        })
+        
+        // 💡 동기식 localStorage.setItem 제거 (상태만 업데이트)
+        setMessages((prev) => [...prev, incoming])
       }
       if (type === 'session_end') {
         setSessionEnded(true)
@@ -107,11 +119,9 @@ export default function App() {
     if (seenIds.current.has(normalized.id)) return
     seenIds.current.add(normalized.id)
 
-    setMessages((prev) => {
-      const next = [...prev, normalized]
-      localStorage.setItem(STORAGE_KEY, serializeMessages(next))
-      return next
-    })
+    // 💡 동기식 localStorage.setItem 제거
+    setMessages((prev) => [...prev, normalized])
+    
     channelRef.current?.postMessage({ type: 'new_message', payload: serializeMessage(normalized) })
 
     fetch('/api/messages', {

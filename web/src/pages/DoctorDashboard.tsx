@@ -91,7 +91,6 @@ export default function DoctorDashboard({
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // ✅ 수정됨: 환자가 보낸 채팅 메시지 수신
   useEffect(() => {
     const handleIncomingMessage = (msg: ChatMessageType) => {
       onNewMessage(msg)
@@ -184,7 +183,6 @@ export default function DoctorDashboard({
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); addNote() }
   }
 
-  // ✅ 수정됨: 메시지 전송 시 socket.emit 추가
   const sendChatMessage = () => {
     const text = chatInput.trim()
     if (!text) return
@@ -211,11 +209,15 @@ export default function DoctorDashboard({
       const newRecord = {
         id: Date.now().toString(),
         date: new Date().toISOString(),
+        endDate: new Date().toISOString(),
         patientName: actualPatientName,
         patientDob: actualPatientDob,
         patientGender: actualPatientGender,
         patientPhone: actualPatientPhone,
         notes,
+        diagnosisSummary: '',
+        isSent: false,
+        deliveryStatus: 'pending',
       }
       localStorage.setItem('medical_records', JSON.stringify([newRecord, ...existingRecords]))
     } catch (e) {

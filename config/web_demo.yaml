@@ -44,8 +44,10 @@ realtime:
   landmark_layout: mediapipe_xyz
   window_size: 32
   capture_interval_ms: 100
-  confidence_threshold: 0.225
-  stable_min_count: 1
+  # 💡 확신도 임계값을 0.225에서 0.75(75%)로 대폭 상향하여 오인식 방지
+  confidence_threshold: 0.75
+  # 💡 우연한 동작 감지를 막기 위해 최소 5프레임 이상 동작이 지속되어야 인정
+  stable_min_count: 5
   max_missing_frames: 3
   min_segment_frames: 8
   segmentation_mode: hand_gap

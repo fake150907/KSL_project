@@ -3,10 +3,8 @@ from __future__ import annotations
 import hashlib
 import os
 
-
 def _default_password_hash() -> str:
     return hashlib.sha256("admin1234".encode("utf-8")).hexdigest()
-
 
 class Config:
     FLASK_SECRET_KEY: str = os.environ.get("FLASK_SECRET_KEY", "sign-interpreter-secret")

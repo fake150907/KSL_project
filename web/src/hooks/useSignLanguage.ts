@@ -64,9 +64,9 @@ export function useSignLanguage(
   const {
     modelType = 'cnn_gru',
     confidenceThreshold = 0.30,
-    windowSize = 16,
+    windowSize = 32,
     stableMinCount = 1,
-    captureIntervalMs = 120,
+    captureIntervalMs = 100,
     maxMissingFrames = 3,
   } = config
 
@@ -193,14 +193,6 @@ export function useSignLanguage(
         void convertLiveGlossToText()
       }, LIVE_GLOSS_IDLE_MS)
     }
-
-    onMessageRef.current({
-      id: `${Date.now()}-${Math.random()}`,
-      sender: 'patient',
-      text: word,
-      timestamp: new Date(),
-      label: '수어 번역',
-    })
   }, [convertLiveGlossToText])
 
   const convertDemoGlossToText = useCallback(async (scenario: DemoScenario) => {

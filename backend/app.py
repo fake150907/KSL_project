@@ -15,8 +15,6 @@ from flask_cors import CORS
 
 VISION_DISABLED = (
     os.environ.get("DISABLE_VISION", "").lower() in {"1", "true", "yes"}
-    or bool(os.environ.get("RAILWAY_ENVIRONMENT"))
-    or bool(os.environ.get("RAILWAY_SERVICE_ID"))
 )
 
 if VISION_DISABLED:
@@ -68,11 +66,15 @@ if VISION_DISABLED:
 else:
     try:
         from src.data.keypoint_utils import mediapipe_landmarks_to_frame, sequence_to_tensor
-        from src.models.model_sequence import build_sequence_model
     except ImportError as exc:
-        print(f"Optional vision imports failed: {exc}")
+        print(f"Optional keypoint imports failed: {exc}")
         mediapipe_landmarks_to_frame = None
         sequence_to_tensor = None
+
+    try:
+        from src.models.model_sequence import build_sequence_model
+    except ImportError as exc:
+        print(f"Optional sequence model imports failed: {exc}")
         build_sequence_model = None
 
 
@@ -88,6 +90,19 @@ memory_misses: dict[str, int] = {}
 memory_predictions: dict[str, deque] = {}
 gloss_to_text_last_called_at: dict[str, float] = {}
 GLOSS_TO_TEXT_MIN_INTERVAL_SECONDS = 6.0
+patient_session_lock = threading.Lock()
+patient_session: dict[str, Any] = {
+    "waiting": False,
+    "patientData": None,
+    "updatedAt": None,
+}
+chat_messages_lock = threading.Lock()
+chat_messages: list[dict[str, Any]] = []
+session_state_lock = threading.Lock()
+session_state: dict[str, Any] = {
+    "ended": False,
+    "updatedAt": None,
+}
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 CONFIG_PATH = os.environ.get("SIGN_CONFIG", str(ROOT_DIR / "config" / "web_demo.yaml"))
@@ -211,8 +226,8 @@ def load_sequence_checkpoint(path: Path) -> tuple[torch.nn.Module, list[str]]:
 def load_models() -> None:
     global sequence_models, sequence_labels, mp_holistic, mp_holistic_instance, mp_drawing
 
-    if mp is None or torch is None or build_sequence_model is None:
-        print("Vision dependencies are not installed; /api/predict will return 503")
+    if mp is None:
+        print("MediaPipe is not installed; /api/predict will return 503")
         return
 
     try:
@@ -227,6 +242,10 @@ def load_models() -> None:
         print("Loaded MediaPipe")
     except Exception as exc:
         print(f"Failed to load MediaPipe: {exc}")
+
+    if torch is None or build_sequence_model is None:
+        print("Sequence model dependencies are not installed; /api/predict will return landmarks only")
+        return
 
     for model_key, path in MODEL_FILES.items():
         try:
@@ -454,6 +473,89 @@ def health():
     return jsonify({"status": "ok"}), 200
 
 
+@app.route("/api/patient-session", methods=["GET", "POST", "DELETE"])
+def api_patient_session():
+    if request.method == "GET":
+        with patient_session_lock:
+            return jsonify(dict(patient_session)), 200
+
+    if request.method == "DELETE":
+        with patient_session_lock:
+            patient_session.update({"waiting": False, "patientData": None, "updatedAt": None})
+            return jsonify(dict(patient_session)), 200
+
+    data = request.get_json(silent=True) or {}
+    patient_data = data.get("patientData") or data.get("patient_data") or data
+    if not isinstance(patient_data, dict):
+        return jsonify({"error": "patientData must be an object"}), 400
+
+    normalized = {
+        "name": str(patient_data.get("name", "")).strip(),
+        "dob": str(patient_data.get("dob", "")).strip(),
+        "gender": str(patient_data.get("gender", "")).strip(),
+        "phone": str(patient_data.get("phone", "")).strip(),
+    }
+    if not normalized["name"] or not normalized["phone"]:
+        return jsonify({"error": "patient name and phone are required"}), 400
+
+    with patient_session_lock:
+        patient_session.update(
+            {
+                "waiting": True,
+                "patientData": normalized,
+                "updatedAt": int(time.time()),
+            }
+        )
+        return jsonify(dict(patient_session)), 200
+
+
+@app.route("/api/messages", methods=["GET", "POST", "DELETE"])
+def api_messages():
+    if request.method == "GET":
+        with chat_messages_lock:
+            return jsonify({"messages": list(chat_messages)}), 200
+
+    if request.method == "DELETE":
+        with chat_messages_lock:
+            chat_messages.clear()
+        return jsonify({"messages": []}), 200
+
+    data = request.get_json(silent=True) or {}
+    message_id = str(data.get("id", "")).strip()
+    sender = str(data.get("sender", "")).strip()
+    text = str(data.get("text", "")).strip()
+    if not message_id or sender not in {"patient", "doctor"} or not text:
+        return jsonify({"error": "id, sender, and text are required"}), 400
+
+    message = {
+        "id": message_id,
+        "sender": sender,
+        "text": text,
+        "timestamp": str(data.get("timestamp") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())),
+        "label": str(data.get("label", "")).strip(),
+    }
+    with chat_messages_lock:
+        if not any(item.get("id") == message_id for item in chat_messages):
+            chat_messages.append(message)
+            del chat_messages[:-200]
+    return jsonify({"message": message}), 200
+
+
+@app.route("/api/session-state", methods=["GET", "POST", "DELETE"])
+def api_session_state():
+    if request.method == "GET":
+        with session_state_lock:
+            return jsonify(dict(session_state)), 200
+
+    with session_state_lock:
+        if request.method == "DELETE":
+            session_state.update({"ended": False, "updatedAt": None})
+        else:
+            data = request.get_json(silent=True) or {}
+            session_state.update({"ended": bool(data.get("ended")), "updatedAt": int(time.time())})
+        return jsonify(dict(session_state)), 200
+
+
 @app.route("/", methods=["GET"])
 def root():
     return jsonify({"status": "ok", "service": "ksl-backend"}), 200
@@ -579,7 +681,7 @@ def predict():
     request_started_at = time.perf_counter()
     try:
         ensure_models_loaded()
-        if cv2 is None or Image is None or mp is None or torch is None or mediapipe_landmarks_to_frame is None or sequence_to_tensor is None:
+        if cv2 is None or Image is None or np is None or mp is None:
             return jsonify({"error": "Vision dependencies are not installed"}), 503
         if mp_holistic_instance is None:
             return jsonify({"error": "MediaPipe is not available"}), 503
@@ -605,7 +707,8 @@ def predict():
                 config.get("realtime", {}).get("window_size", config["data"]["sequence_length"]),
             )
         )
-        window_size = max(8, min(requested_window_size, int(config["data"]["sequence_length"])))
+        sequence_length = int(config["data"]["sequence_length"])
+        window_size = max(8, min(requested_window_size, sequence_length))
         stable_min_count = int(
             request.form.get("stable_min_count", config.get("realtime", {}).get("stable_min_count", 2))
         )
@@ -662,8 +765,11 @@ def predict():
             "missing_frames": get_session_misses(client_id),
             "max_missing_frames": max_missing_frames,
             "min_segment_frames": min_segment_frames,
+            "segment_frames": None,
+            "sequence_length": sequence_length,
             "temperature": temperature,
             "tta_enabled": use_tta,
+            "run_model": run_model,
             "top_predictions": [],
             "frame_id": frame_id,
             "landmark_layout": landmark_layout,
@@ -672,7 +778,9 @@ def predict():
             "processed_size": {"width": int(processed_width), "height": int(processed_height)},
         }
 
-        if has_hand:
+        can_collect_sequence = mediapipe_landmarks_to_frame is not None
+
+        if has_hand and can_collect_sequence:
             set_session_misses(client_id, 0)
             prediction["missing_frames"] = 0
             frame_points = mediapipe_landmarks_to_frame(results)
@@ -682,6 +790,13 @@ def predict():
             prediction["window_filled"] = False
             prediction["segmenting"] = True
             prediction["status"] = "수어 단어 구간 수집 중"
+        elif has_hand:
+            set_session_misses(client_id, 0)
+            prediction["missing_frames"] = 0
+            prediction["window_progress"] = len(window)
+            prediction["window_filled"] = False
+            prediction["segmenting"] = True
+            prediction["status"] = "MediaPipe 랜드마크 감지 중"
         else:
             misses = get_session_misses(client_id) + 1
             set_session_misses(client_id, misses)
@@ -738,8 +853,12 @@ def predict():
             f"has_hand={prediction.get('has_hand')}, "
             f"has_pose={prediction.get('has_pose')}, "
             f"window={prediction.get('window_progress')}/{prediction.get('window_size')}, "
+            f"segment_frames={prediction.get('segment_frames')}, "
+            f"min_segment_frames={prediction.get('min_segment_frames')}, "
+            f"sequence_length={prediction.get('sequence_length')}, "
             f"miss={prediction.get('missing_frames')}/{prediction.get('max_missing_frames')}, "
             f"window_filled={prediction.get('window_filled')}, "
+            f"run_model={prediction.get('run_model')}, "
             f"temp={prediction.get('temperature')}, "
             f"tta={prediction.get('tta_count')}, "
             f"top={top_log}",

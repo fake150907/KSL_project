@@ -12,10 +12,22 @@ interface MedicalRecord {
     patientGender: string;
     patientPhone: string;
     notes: DoctorNote[];
+    diagnosisSummary?: string;
     isSent?: boolean;
+    deliveryStatus?: 'pending' | 'kakao_sent' | 'clipboard_copied' | 'failed';
+    sentAt?: string;
 }
 
 interface DoctorLaunchScreenProps { onSessionReset?: () => void }
+
+interface DiagnosisSummaryPayload {
+    patientName?: string;
+    patientPhone?: string;
+    diagnosisSummary: string;
+    isSent?: boolean;
+    deliveryStatus?: 'pending' | 'kakao_sent' | 'clipboard_copied' | 'failed';
+    sentAt?: string;
+}
 
 const TAG_STYLES: Record<string, string> = {
     증상: 'bg-red-50 text-red-500 border-red-100',
@@ -42,6 +54,46 @@ export default function DoctorLaunchScreen({ onSessionReset }: DoctorLaunchScree
         registerRole('doctor')
     }, [])
 
+    const applyDiagnosisSummary = (payload: DiagnosisSummaryPayload) => {
+        const normalizedPhone = (value?: string) => (value || '').replace(/\D/g, '')
+        const targetPhone = normalizedPhone(payload.patientPhone)
+        const patch = {
+            diagnosisSummary: payload.diagnosisSummary,
+            isSent: !!payload.isSent,
+            deliveryStatus: payload.deliveryStatus || (payload.isSent ? 'kakao_sent' : 'clipboard_copied'),
+            sentAt: payload.sentAt || new Date().toISOString(),
+        }
+
+        const saved = JSON.parse(localStorage.getItem('medical_records') || '[]') as MedicalRecord[]
+        const index = targetPhone
+            ? saved.findIndex((record) => normalizedPhone(record.patientPhone) === targetPhone)
+            : 0
+
+        if (index >= 0) {
+            saved[index] = { ...saved[index], ...patch }
+        } else {
+            saved.unshift({
+                id: Date.now().toString(),
+                date: new Date().toISOString(),
+                patientName: payload.patientName || '미상',
+                patientDob: '미상',
+                patientGender: '미상',
+                patientPhone: payload.patientPhone || '',
+                notes: [],
+                ...patch,
+            })
+        }
+
+        localStorage.setItem('medical_records', JSON.stringify(saved))
+        setRecords(saved)
+        setSelectedRecord((current) => {
+            if (!current) return current
+            const updated = saved.find((record) => record.id === current.id)
+                || (targetPhone ? saved.find((record) => normalizedPhone(record.patientPhone) === targetPhone) : undefined)
+            return updated || current
+        })
+    }
+
     useEffect(() => {
         const id = setInterval(() => setCurrentTime(new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })), 10_000)
         return () => clearInterval(id)
@@ -63,9 +115,11 @@ export default function DoctorLaunchScreen({ onSessionReset }: DoctorLaunchScree
 
         socket.on('patient_arrived', handlePatientArrived)
         socket.on('session_reset', handleSessionReset)
+        socket.on('diagnosis_summary_saved', applyDiagnosisSummary)
         return () => {
             socket.off('patient_arrived', handlePatientArrived)
             socket.off('session_reset', handleSessionReset)
+            socket.off('diagnosis_summary_saved', applyDiagnosisSummary)
         }
     }, [])
 
@@ -80,6 +134,19 @@ export default function DoctorLaunchScreen({ onSessionReset }: DoctorLaunchScree
         const saved = localStorage.getItem('medical_records')
         if (saved) setRecords(JSON.parse(saved))
         setShowRecords(true)
+    }
+
+    const getDeliveryLabel = (record: MedicalRecord) => {
+        if (record.deliveryStatus === 'kakao_sent' || record.isSent) return '카카오톡 전송 완료'
+        if (record.deliveryStatus === 'failed') return '전송 실패'
+        return '미전송'
+    }
+
+    const getDeliveryClass = (record: MedicalRecord) => {
+        if (record.deliveryStatus === 'kakao_sent' || record.isSent) return 'text-emerald-500'
+        if (record.deliveryStatus === 'clipboard_copied') return 'text-amber-500'
+        if (record.deliveryStatus === 'failed') return 'text-red-500'
+        return 'text-slate-400'
     }
 
     const handleCloseRecords = () => { setShowRecords(false); setSelectedRecord(null) }
@@ -181,7 +248,11 @@ export default function DoctorLaunchScreen({ onSessionReset }: DoctorLaunchScree
                                         </div>
                                         <div className="pt-2">
                                             <h4 className="text-lg md:text-xl font-black text-slate-900 mb-4">진단 내용 요약</h4>
-                                            <span className="text-gray-600 font-bold text-sm md:text-base">진단내용 보류 (백엔드 대기중)</span>
+                                            {selectedRecord.diagnosisSummary ? (
+                                                <p className="whitespace-pre-wrap rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm md:text-base font-medium leading-relaxed text-slate-700">{selectedRecord.diagnosisSummary}</p>
+                                            ) : (
+                                                <span className="text-gray-600 font-bold text-sm md:text-base">진단내용 보류 (백엔드 대기중)</span>
+                                            )}
                                         </div>
                                         <div className="mt-4 pt-6 border-t border-slate-100 flex flex-col gap-4">
                                             <p><span className="font-bold text-slate-500 w-full sm:w-48 block sm:inline-block mb-2 sm:mb-0">진단 메모(의사 메모) :</span></p>
@@ -193,7 +264,7 @@ export default function DoctorLaunchScreen({ onSessionReset }: DoctorLaunchScree
                                                     </div>
                                                 ))}
                                             </div>
-                                            <p className="flex flex-col sm:flex-row sm:items-center mt-2"><span className="font-bold text-slate-500 w-full sm:w-48 mb-1 sm:mb-0">진단 내용 전송여부 :</span> <span className={`font-black ${selectedRecord.isSent ? 'text-emerald-500' : 'text-slate-400'}`}>{selectedRecord.isSent ? 'YES' : 'NO'}</span></p>
+                                            <p className="flex flex-col sm:flex-row sm:items-center mt-2"><span className="font-bold text-slate-500 w-full sm:w-48 mb-1 sm:mb-0">진단 내용 전송여부 :</span> <span className={`font-black ${getDeliveryClass(selectedRecord)}`}>{getDeliveryLabel(selectedRecord)}</span></p>
                                         </div>
                                     </div>
                                 </div>
