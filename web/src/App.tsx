@@ -89,6 +89,51 @@ export default function App() {
     return () => channel.close()
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+
+    const pollServerState = async () => {
+      try {
+        const [messagesRes, sessionRes] = await Promise.all([
+          fetch('/api/messages', { credentials: 'include' }),
+          fetch('/api/session-state', { credentials: 'include' }),
+        ])
+
+        if (messagesRes.ok) {
+          const data = await messagesRes.json().catch(() => ({}))
+          const incomingMessages = Array.isArray(data.messages) ? data.messages : []
+          const unseen = incomingMessages
+            .map((item: IncomingChatMessage) => normalizeMessage(item))
+            .filter((item: ChatMessage) => !seenIds.current.has(item.id))
+
+          if (!cancelled && unseen.length > 0) {
+            unseen.forEach((item: ChatMessage) => seenIds.current.add(item.id))
+            setMessages((prev) => {
+              const next = [...prev, ...unseen]
+              localStorage.setItem(STORAGE_KEY, serializeMessages(next))
+              return next
+            })
+          }
+        }
+
+        if (sessionRes.ok) {
+          const data = await sessionRes.json().catch(() => ({}))
+          if (!cancelled && data.ended === true) {
+            setSessionEnded(true)
+            localStorage.setItem(SESSION_KEY, 'ended')
+          }
+        }
+      } catch {}
+    }
+
+    void pollServerState()
+    const id = setInterval(pollServerState, 1000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [])
+
   const handleLogin = () => {
     localStorage.setItem(AUTH_KEY, 'true')
     setIsAuthenticated(true)
@@ -125,6 +170,12 @@ export default function App() {
     setSessionEnded(true)
     localStorage.setItem(SESSION_KEY, 'ended')
     channelRef.current?.postMessage({ type: 'session_end', payload: null })
+    fetch('/api/session-state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ ended: true }),
+    }).catch(() => {})
   }, [])
 
   const handleSessionReset = useCallback(() => {
@@ -134,6 +185,8 @@ export default function App() {
     localStorage.removeItem(STORAGE_KEY)
     localStorage.removeItem(SESSION_KEY)
     channelRef.current?.postMessage({ type: 'session_reset', payload: null })
+    fetch('/api/messages', { method: 'DELETE', credentials: 'include' }).catch(() => {})
+    fetch('/api/session-state', { method: 'DELETE', credentials: 'include' }).catch(() => {})
   }, [])
 
   return (

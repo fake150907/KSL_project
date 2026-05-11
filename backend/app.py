@@ -94,6 +94,13 @@ patient_session: dict[str, Any] = {
     "patientData": None,
     "updatedAt": None,
 }
+chat_messages_lock = threading.Lock()
+chat_messages: list[dict[str, Any]] = []
+session_state_lock = threading.Lock()
+session_state: dict[str, Any] = {
+    "ended": False,
+    "updatedAt": None,
+}
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 CONFIG_PATH = os.environ.get("SIGN_CONFIG", str(ROOT_DIR / "config" / "web_demo.yaml"))
@@ -494,6 +501,53 @@ def api_patient_session():
             }
         )
         return jsonify(dict(patient_session)), 200
+
+
+@app.route("/api/messages", methods=["GET", "POST", "DELETE"])
+def api_messages():
+    if request.method == "GET":
+        with chat_messages_lock:
+            return jsonify({"messages": list(chat_messages)}), 200
+
+    if request.method == "DELETE":
+        with chat_messages_lock:
+            chat_messages.clear()
+        return jsonify({"messages": []}), 200
+
+    data = request.get_json(silent=True) or {}
+    message_id = str(data.get("id", "")).strip()
+    sender = str(data.get("sender", "")).strip()
+    text = str(data.get("text", "")).strip()
+    if not message_id or sender not in {"patient", "doctor"} or not text:
+        return jsonify({"error": "id, sender, and text are required"}), 400
+
+    message = {
+        "id": message_id,
+        "sender": sender,
+        "text": text,
+        "timestamp": str(data.get("timestamp") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())),
+        "label": str(data.get("label", "")).strip(),
+    }
+    with chat_messages_lock:
+        if not any(item.get("id") == message_id for item in chat_messages):
+            chat_messages.append(message)
+            del chat_messages[:-200]
+    return jsonify({"message": message}), 200
+
+
+@app.route("/api/session-state", methods=["GET", "POST", "DELETE"])
+def api_session_state():
+    if request.method == "GET":
+        with session_state_lock:
+            return jsonify(dict(session_state)), 200
+
+    with session_state_lock:
+        if request.method == "DELETE":
+            session_state.update({"ended": False, "updatedAt": None})
+        else:
+            data = request.get_json(silent=True) or {}
+            session_state.update({"ended": bool(data.get("ended")), "updatedAt": int(time.time())})
+        return jsonify(dict(session_state)), 200
 
 
 @app.route("/", methods=["GET"])
