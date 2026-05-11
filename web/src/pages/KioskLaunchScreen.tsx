@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { PatientData, Step } from '../components/hangul'
-import { socket, registerRole } from '../socket' // ✅ 수정됨: registerRole 추가 임포트
+import { socket, registerRole } from '../socket'
 
 import {
   StepStart, StepName, StepDob, StepGender,
@@ -13,15 +13,22 @@ export default function KioskLaunchScreen() {
 
   const [step, setStep] = useState<Step>('start')
   const [data, setData] = useState<PatientData>({ name: '', dob: '', gender: '', phone: '010' })
-  const [patientSessionSaved, setPatientSessionSaved] = useState(false)
+  
   const dataRef = useRef(data)
+  // 💡 현재 진행 단계를 추적하기 위한 참조 변수 추가
+  const stepRef = useRef(step)
 
   // 최신 데이터 동기화
   useEffect(() => {
     dataRef.current = data
   }, [data])
 
-  // ✅ 수정됨: 컴포넌트 마운트 시 키오스크 역할 등록
+  // 💡 최신 진행 단계 동기화
+  useEffect(() => {
+    stepRef.current = step
+  }, [step])
+
+  // 컴포넌트 마운트 시 키오스크 역할 등록
   useEffect(() => {
     registerRole('kiosk')
   }, [])
@@ -29,7 +36,12 @@ export default function KioskLaunchScreen() {
   // socket.io: doctor_ready 수신 → 진료실 이동
   useEffect(() => {
     const handleDoctorReady = () => {
-      navigate('/kiosk/session', { state: { patientData: dataRef.current } })
+      // 💡 탑승객이 모두 탑승한 상태(waiting)인지 확인 후 기차 출발(navigate)
+      if (stepRef.current === 'waiting') {
+        navigate('/kiosk/session', { state: { patientData: dataRef.current } })
+      } else {
+        console.warn('의사가 준비되었으나, 환자 정보 입력이 완료되지 않았습니다.')
+      }
     }
 
     socket.on('doctor_ready', handleDoctorReady)
@@ -38,46 +50,10 @@ export default function KioskLaunchScreen() {
     }
   }, [navigate])
 
-  useEffect(() => {
-    if (step !== 'waiting' || !patientSessionSaved) return
-
-    let cancelled = false
-
-    const checkDoctorEntered = async () => {
-      try {
-        const res = await fetch('/api/patient-session', { credentials: 'include' })
-        if (!res.ok) return
-        const session = await res.json() as { waiting?: boolean }
-        if (!cancelled && session.waiting === false) {
-          navigate('/kiosk/session', { state: { patientData: dataRef.current } })
-        }
-      } catch (err) {
-        console.warn('Failed to check patient session:', err)
-      }
-    }
-
-    const id = setInterval(checkDoctorEntered, 1500)
-    return () => {
-      cancelled = true
-      clearInterval(id)
-    }
-  }, [step, patientSessionSaved, navigate])
-
   const go = (s: Step) => setStep(s)
 
-  const handleFinish = async () => {
+  const handleFinish = () => {
     setStep('waiting')
-    try {
-      const res = await fetch('/api/patient-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ patientData: dataRef.current }),
-      })
-      if (res.ok) setPatientSessionSaved(true)
-    } catch (err) {
-      console.warn('Failed to save patient session:', err)
-    }
     // socket.io: 환자 도착 알림 → 서버 → 의사 대기실
     socket.emit('patient_arrived', { patientData: dataRef.current })
   }

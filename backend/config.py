@@ -3,10 +3,8 @@ from __future__ import annotations
 import hashlib
 import os
 
-
 def _default_password_hash() -> str:
     return hashlib.sha256("admin1234".encode("utf-8")).hexdigest()
-
 
 class Config:
     FLASK_SECRET_KEY: str = os.environ.get("FLASK_SECRET_KEY", "sign-interpreter-secret")
@@ -23,4 +21,5 @@ class Config:
 
     # Standard name first, plus the misspelled variant mentioned during handoff.
     ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTROPIC_API_KEY", "")
-    ANTHROPIC_MODEL: str = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+    # 💡 최신 모델인 claude-sonnet-4-20250514로 기본값 업데이트
+    ANTHROPIC_MODEL: str = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")

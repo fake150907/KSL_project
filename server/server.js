@@ -91,6 +91,11 @@ io.on("connection", (socket) => {
     io.to(targetRole).emit("chat_message", msg);
   });
 
+  socket.on("diagnosis_summary_saved", (payload) => {
+    console.log("[diagnosis_summary_saved]");
+    io.to("doctor").emit("diagnosis_summary_saved", payload);
+  });
+
   // ─────────────────────────────────────────
   // WebRTC 시그널링
   // target: 'kiosk' | 'doctor' (role 이름)
@@ -147,16 +152,14 @@ io.on("connection", (socket) => {
     const role = connectedUsers[socket.id];
     console.log(`[연결 종료] ${role ?? "unknown"} (${socket.id})`);
     delete connectedUsers[socket.id];
-    // roleToSocketId에서 이 소켓이 최신이면 삭제
     if (role && roleToSocketId[role] === socket.id) {
       delete roleToSocketId[role];
     }
-    // 큐도 정리
     delete iceCandidateQueue[socket.id];
   });
 });
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 5001;
 server.listen(PORT, () => {
   console.log(`🚀 시그널링 서버 포트 ${PORT}`);
 });

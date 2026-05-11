@@ -37,11 +37,7 @@ export default function PatientKiosk({
   
   const [isWaitingForDoctor, setIsWaitingForDoctor] = useState(sessionEnded)
   const [sendStatus, setSendStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
-  const [sendStep, setSendStep] = useState<'summarizing' | 'sending' | ''>('')
   const [sendError, setSendError] = useState('')
-  const [hasKakaoToken, setHasKakaoToken] = useState(!!localStorage.getItem('KAKAO_ACCESS_TOKEN'))
-  const [logoutCountdown, setLogoutCountdown] = useState(15)
-  const [isCountingDown, setIsCountingDown] = useState(false)
   const [showPopup, setShowPopup] = useState(false)
   const [showDemoList, setShowDemoList] = useState(false)
   const [predictionLog, setPredictionLog] = useState<Array<{ label: string; confidence: number; timestamp: number }>>([])
@@ -117,18 +113,7 @@ export default function PatientKiosk({
     const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
     peerConnectionRef.current = pc;
     const stream = videoRef.current.srcObject as MediaStream;
-    stream.getTracks().forEach((track) => {
-      const sender = pc.addTrack(track, stream);
-      if (track.kind === 'video') {
-        const params = sender.getParameters();
-        params.encodings = params.encodings?.length ? params.encodings : [{}];
-        params.encodings[0].maxBitrate = 700_000;
-        params.encodings[0].maxFramerate = 20;
-        void sender.setParameters(params).catch((err) => {
-          console.warn('WebRTC video parameter update failed:', err);
-        });
-      }
-    });
+    stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
     pc.onicecandidate = (event) => { 
       if (event.candidate) {
@@ -207,28 +192,6 @@ export default function PatientKiosk({
     })
   }, [currentPrediction?.timestamp, currentPrediction?.window_filled, currentPrediction?.label, currentPrediction?.confidence, currentPrediction?.top_predictions])
 
-  useEffect(() => {
-    if (sendStatus === 'sent') {
-      setLogoutCountdown(15)
-      setIsCountingDown(true)
-    }
-  }, [sendStatus])
-
-  useEffect(() => {
-    if (!isCountingDown) return
-    if (logoutCountdown <= 0) {
-      localStorage.removeItem('KAKAO_ACCESS_TOKEN')
-      localStorage.removeItem('KAKAO_REFRESH_TOKEN')
-      setHasKakaoToken(false)
-      setIsCountingDown(false)
-      setShowPopup(false)
-      navigate('/kiosk')
-      return
-    }
-    const timer = setTimeout(() => setLogoutCountdown((prev) => prev - 1), 1000)
-    return () => clearTimeout(timer)
-  }, [logoutCountdown, isCountingDown, navigate])
-
   const predictionStatus = currentPrediction ? getPredictionStatus(currentPrediction) : ''
   const isRecognized = !!currentPrediction?.window_filled && !!currentPrediction?.label && (currentPrediction?.confidence ?? 0) >= 0.30
   const bannerLabel = isRecognized ? predictionStatus.replace('인식 중... ', '') : predictionStatus
@@ -236,23 +199,6 @@ export default function PatientKiosk({
   const buildChatText = () => {
     if (messages.length === 0) return '대화 내역이 없습니다.'
     return messages.map((m) => `[${m.timestamp.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}] ${m.sender === 'doctor' ? '의사' : '환자'}: ${m.text}`).join('\n')
-  }
-
-  const buildClinicalSummaryInput = () => {
-    const conversation = messages.map((m) => {
-      const speaker = m.sender === 'doctor' ? 'doctor' : 'patient'
-      const time = m.timestamp.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
-      return `[${time}] ${speaker}: ${m.text}`
-    })
-
-    conversation.unshift(`patient_name: ${actualPatientName}`)
-    conversation.unshift(`patient_phone: ${actualPatientPhone}`)
-
-    if (messages.length === 0) {
-      conversation.push('no conversation messages')
-    }
-
-    return conversation
   }
 
   const formatPhone = (val: string) => {
@@ -271,7 +217,48 @@ export default function PatientKiosk({
     const conversation = messages.map((m) => `${m.sender === 'doctor' ? '의사' : '환자'}: ${m.text}`)
     const chatText = buildChatText()
     const accessToken = localStorage.getItem('KAKAO_ACCESS_TOKEN') || ''
+    const refreshToken = localStorage.getItem('KAKAO_REFRESH_TOKEN') || ''
     let summaryText = chatText
+
+    const saveDiagnosisSummary = (deliveryStatus: 'kakao_sent' | 'clipboard_copied' | 'failed') => {
+      try {
+        const records = JSON.parse(localStorage.getItem('medical_records') || '[]')
+        const normalizedPhone = (value: string) => value.replace(/[^0-9]/g, '')
+        const index = records.findIndex((record: any) => normalizedPhone(record.patientPhone || '') === cleaned)
+        const patch = {
+          diagnosisSummary: summaryText,
+          isSent: deliveryStatus === 'kakao_sent',
+          deliveryStatus,
+          sentAt: new Date().toISOString(),
+        }
+
+        if (index >= 0) {
+          records[index] = { ...records[index], ...patch }
+        } else {
+          records.unshift({
+            id: Date.now().toString(),
+            date: new Date().toISOString(),
+            patientName: actualPatientName,
+            patientDob: '미상',
+            patientGender: '미상',
+            patientPhone: actualPatientPhone,
+            notes: [],
+            ...patch,
+          })
+        }
+        localStorage.setItem('medical_records', JSON.stringify(records))
+        socket.emit('diagnosis_summary_saved', {
+          patientName: actualPatientName,
+          patientPhone: actualPatientPhone,
+          diagnosisSummary: summaryText,
+          isSent: deliveryStatus === 'kakao_sent',
+          deliveryStatus,
+          sentAt: patch.sentAt,
+        })
+      } catch (err) {
+        console.error('Failed to save diagnosis summary:', err)
+      }
+    }
 
     try {
       if (conversation.length > 0) {
@@ -291,61 +278,13 @@ export default function PatientKiosk({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ access_token: accessToken, summary: summaryText }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || '카카오톡 전송에 실패했습니다.')
-      setSendStatus('sent')
-      return
-    } catch (err) {
-      setSendError(err instanceof Error ? err.message : '카카오톡 전송에 실패했습니다.')
-    }
-
-    try {
-      await navigator.clipboard.writeText(`[수어 진료 요약본]\n전화번호: ${cleaned}\n\n${summaryText}`)
-    } catch {}
-    setSendStatus('error')
-  }
-
-  const handleSendKakaoSummaryV2 = async () => {
-    const cleaned = actualPatientPhone.replace(/[^0-9]/g, '')
-    if (cleaned.length < 10) return
-    setSendStatus('sending')
-    setSendStep('summarizing')
-    setSendError('')
-
-    const conversation = buildClinicalSummaryInput()
-    const chatText = buildChatText()
-    const accessToken = localStorage.getItem('KAKAO_ACCESS_TOKEN') || ''
-    const refreshToken = localStorage.getItem('KAKAO_REFRESH_TOKEN') || ''
-    let summaryText = chatText
-
-    try {
-      const summaryRes = await fetch('/api/summary', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ conversation }),
-      })
-      if (summaryRes.ok) {
-        const summaryData = await summaryRes.json().catch(() => ({}))
-        summaryText = summaryData.summary || chatText
-      }
-
-      setSendStep('sending')
-      const res = await fetch('/api/notify/kakao', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ access_token: accessToken, refresh_token: refreshToken, summary: summaryText }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        throw new Error(data.error || '카카오톡 전송에 실패했습니다.')
-      }
-      if (data.access_token) { localStorage.setItem('KAKAO_ACCESS_TOKEN', data.access_token); setHasKakaoToken(true) }
+      if (!res.ok) throw new Error(data.error || '카카오톡 전송에 실패했습니다.')
+      if (data.access_token) localStorage.setItem('KAKAO_ACCESS_TOKEN', data.access_token)
       if (data.refresh_token) localStorage.setItem('KAKAO_REFRESH_TOKEN', data.refresh_token)
-      setSendStep('')
+      saveDiagnosisSummary('kakao_sent')
       setSendStatus('sent')
       return
     } catch (err) {
@@ -354,43 +293,14 @@ export default function PatientKiosk({
 
     try {
       await navigator.clipboard.writeText(`[수어 진료 요약본]\n전화번호: ${cleaned}\n\n${summaryText}`)
-    } catch {}
+      saveDiagnosisSummary('clipboard_copied')
+    } catch {
+      saveDiagnosisSummary('failed')
+    }
     setSendStatus('error')
   }
 
-  const handleKakaoLogin = () => {
-    sessionStorage.setItem('kakao_return_url', '/kiosk/session')
-    sessionStorage.setItem('kakao_return_patient', JSON.stringify({
-      name: actualPatientName,
-      phone: actualPatientPhone,
-    }))
-    const redirectUri = encodeURIComponent(`${window.location.origin}/kakao/callback`)
-    window.location.href = `/api/kakao/login?redirect_uri=${redirectUri}`
-  }
-
-  const handleAutoLogout = () => {
-    localStorage.removeItem('KAKAO_ACCESS_TOKEN')
-    localStorage.removeItem('KAKAO_REFRESH_TOKEN')
-    setHasKakaoToken(false)
-    setIsCountingDown(false)
-    setShowPopup(false)
-    navigate('/kiosk')
-  }
-
-  const handleKeepLogin = () => {
-    setIsCountingDown(false)
-    setShowPopup(false)
-    navigate('/kiosk')
-  }
-
-  const handleResend = () => {
-    setIsCountingDown(false)
-    setSendStatus('idle')
-    setSendStep('')
-    setSendError('')
-  }
-
-  const handleClosePopup = () => { 
+const handleClosePopup = () => { 
     setShowPopup(false)
     onSessionReset?.()
     navigate('/kiosk') 
