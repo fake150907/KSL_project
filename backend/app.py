@@ -15,8 +15,6 @@ from flask_cors import CORS
 
 VISION_DISABLED = (
     os.environ.get("DISABLE_VISION", "").lower() in {"1", "true", "yes"}
-    or bool(os.environ.get("RAILWAY_ENVIRONMENT"))
-    or bool(os.environ.get("RAILWAY_SERVICE_ID"))
 )
 
 if VISION_DISABLED:
@@ -68,11 +66,15 @@ if VISION_DISABLED:
 else:
     try:
         from src.data.keypoint_utils import mediapipe_landmarks_to_frame, sequence_to_tensor
-        from src.models.model_sequence import build_sequence_model
     except ImportError as exc:
-        print(f"Optional vision imports failed: {exc}")
+        print(f"Optional keypoint imports failed: {exc}")
         mediapipe_landmarks_to_frame = None
         sequence_to_tensor = None
+
+    try:
+        from src.models.model_sequence import build_sequence_model
+    except ImportError as exc:
+        print(f"Optional sequence model imports failed: {exc}")
         build_sequence_model = None
 
 
@@ -224,8 +226,8 @@ def load_sequence_checkpoint(path: Path) -> tuple[torch.nn.Module, list[str]]:
 def load_models() -> None:
     global sequence_models, sequence_labels, mp_holistic, mp_holistic_instance, mp_drawing
 
-    if mp is None or torch is None or build_sequence_model is None:
-        print("Vision dependencies are not installed; /api/predict will return 503")
+    if mp is None:
+        print("MediaPipe is not installed; /api/predict will return 503")
         return
 
     try:
@@ -240,6 +242,10 @@ def load_models() -> None:
         print("Loaded MediaPipe")
     except Exception as exc:
         print(f"Failed to load MediaPipe: {exc}")
+
+    if torch is None or build_sequence_model is None:
+        print("Sequence model dependencies are not installed; /api/predict will return landmarks only")
+        return
 
     for model_key, path in MODEL_FILES.items():
         try:
@@ -675,7 +681,7 @@ def predict():
     request_started_at = time.perf_counter()
     try:
         ensure_models_loaded()
-        if cv2 is None or Image is None or mp is None or torch is None or mediapipe_landmarks_to_frame is None or sequence_to_tensor is None:
+        if cv2 is None or Image is None or np is None or mp is None:
             return jsonify({"error": "Vision dependencies are not installed"}), 503
         if mp_holistic_instance is None:
             return jsonify({"error": "MediaPipe is not available"}), 503
@@ -768,7 +774,9 @@ def predict():
             "processed_size": {"width": int(processed_width), "height": int(processed_height)},
         }
 
-        if has_hand:
+        can_collect_sequence = mediapipe_landmarks_to_frame is not None
+
+        if has_hand and can_collect_sequence:
             set_session_misses(client_id, 0)
             prediction["missing_frames"] = 0
             frame_points = mediapipe_landmarks_to_frame(results)
@@ -778,6 +786,13 @@ def predict():
             prediction["window_filled"] = False
             prediction["segmenting"] = True
             prediction["status"] = "수어 단어 구간 수집 중"
+        elif has_hand:
+            set_session_misses(client_id, 0)
+            prediction["missing_frames"] = 0
+            prediction["window_progress"] = len(window)
+            prediction["window_filled"] = False
+            prediction["segmenting"] = True
+            prediction["status"] = "MediaPipe 랜드마크 감지 중"
         else:
             misses = get_session_misses(client_id) + 1
             set_session_misses(client_id, misses)
