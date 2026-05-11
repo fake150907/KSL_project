@@ -1,57 +1,68 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { PatientData, Step } from '../components/hangul'
+import { socket, registerRole } from '../socket' // ✅ 수정됨: registerRole 추가 임포트
 
-// 💡 방금 생성한 분리된 컴포넌트들을 불러옵니다
 import {
   StepStart, StepName, StepDob, StepGender,
   StepPhone, StepConfirm, StepWaiting
 } from '../components/KioskSteps'
 
-const NOTIFY_CHANNEL = 'patient-session-notify'
-
 export default function KioskLaunchScreen() {
   const navigate = useNavigate()
-  const channelRef = useRef<BroadcastChannel | null>(null)
 
-  // 상태 관리 (데이터 및 현재 화면 단계)
   const [step, setStep] = useState<Step>('start')
   const [data, setData] = useState<PatientData>({ name: '', dob: '', gender: '', phone: '010' })
   const dataRef = useRef(data)
 
-  // 최신 데이터 동기화 유지
+  // 최신 데이터 동기화
   useEffect(() => {
     dataRef.current = data
   }, [data])
 
-  // BroadcastChannel 수신 및 진료실 이동 로직
+  // ✅ 수정됨: 컴포넌트 마운트 시 키오스크 역할 등록
   useEffect(() => {
-    const ch = new BroadcastChannel(NOTIFY_CHANNEL)
-    channelRef.current = ch
-    ch.onmessage = (e) => {
-      if (e.data?.type === 'doctor_ready') {
-        navigate('/kiosk/session', { state: { patientData: dataRef.current } })
-      }
+    registerRole('kiosk')
+  }, [])
+
+  // socket.io: doctor_ready 수신 → 진료실 이동
+  useEffect(() => {
+    const handleDoctorReady = () => {
+      navigate('/kiosk/session', { state: { patientData: dataRef.current } })
     }
-    return () => ch.close()
+
+    socket.on('doctor_ready', handleDoctorReady)
+    return () => {
+      socket.off('doctor_ready', handleDoctorReady)
+    }
   }, [navigate])
 
   const go = (s: Step) => setStep(s)
 
   const handleFinish = () => {
     setStep('waiting')
-    channelRef.current?.postMessage({ type: 'patient_arrived', payload: data })
+    // socket.io: 환자 도착 알림 → 서버 → 의사 대기실
+    socket.emit('patient_arrived', { patientData: dataRef.current })
   }
 
-  // 화면 단계(Step)에 따라 렌더링할 뷰(View)를 분기 처리
-  switch (step) {
-    case 'start':   return <StepStart go={go} />
-    case 'name':    return <StepName data={data} setData={setData} go={go} />
-    case 'dob':     return <StepDob data={data} setData={setData} go={go} />
-    case 'gender':  return <StepGender data={data} setData={setData} go={go} />
-    case 'phone':   return <StepPhone data={data} setData={setData} go={go} />
-    case 'confirm': return <StepConfirm data={data} setData={setData} go={go} onFinish={handleFinish} />
-    case 'waiting': return <StepWaiting data={data} setData={setData} go={go} />
-    default:        return null
+  const renderStep = () => {
+    switch (step) {
+      case 'start':   return <StepStart go={go} />
+      case 'name':    return <StepName data={data} setData={setData} go={go} />
+      case 'dob':     return <StepDob data={data} setData={setData} go={go} />
+      case 'gender':  return <StepGender data={data} setData={setData} go={go} />
+      case 'phone':   return <StepPhone data={data} setData={setData} go={go} />
+      case 'confirm': return <StepConfirm data={data} setData={setData} go={go} onFinish={handleFinish} />
+      case 'waiting': return <StepWaiting data={data} setData={setData} go={go} />
+      default:        return null
+    }
   }
+
+  return (
+    <div className="fixed inset-0 bg-slate-100 flex flex-col overflow-hidden">
+      <div className="flex flex-col flex-1 w-full h-full bg-white text-slate-900 overflow-y-auto">
+        {renderStep()}
+      </div>
+    </div>
+  )
 }

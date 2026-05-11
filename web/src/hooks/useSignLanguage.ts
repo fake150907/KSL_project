@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import type { Prediction, ChatMessage } from '../types'
 
-// 💡 매직 넘버 상수화
 const VIDEO_WIDTH = 640
 const VIDEO_HEIGHT = 480
-const PREDICT_FRAME_WIDTH = 640
-const PREDICT_FRAME_HEIGHT = 480
-const JPEG_QUALITY = 0.88
+const PREDICT_FRAME_WIDTH = 424
+const PREDICT_FRAME_HEIGHT = 320
+const JPEG_QUALITY = 0.72
 const MODEL_INFERENCE_EVERY_N_FRAMES = 5
 const DEMO_PLAYBACK_RATE = 0.65
 const LIVE_GLOSS_IDLE_MS = 6500
@@ -67,7 +66,7 @@ export function useSignLanguage(
     confidenceThreshold = 0.30,
     windowSize = 16,
     stableMinCount = 1,
-    captureIntervalMs = 60,
+    captureIntervalMs = 120,
     maxMissingFrames = 3,
   } = config
 
@@ -77,6 +76,7 @@ export function useSignLanguage(
   
   const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
+  const onMessageRef = useRef(onMessage)
   const isMounted = useRef(true)
 
   const isPredictingRef = useRef(false)
@@ -84,7 +84,6 @@ export function useSignLanguage(
   const latestFrameIdRef = useRef(0)
   const clientIdRef = useRef<string>(Math.random().toString(36).substring(7))
   
-  // 💡 [핵심 2] Peak Detection(최고점 추출)용 상태 저장소
   const peakGestureRef = useRef<{ label: string, confidence: number } | null>(null)
   const isHandUpRef = useRef(false)
 
@@ -106,6 +105,7 @@ export function useSignLanguage(
 
   const selectedDeviceIdRef = useRef(selectedDeviceId)
   useEffect(() => { selectedDeviceIdRef.current = selectedDeviceId }, [selectedDeviceId])
+  useEffect(() => { onMessageRef.current = onMessage }, [onMessage])
 
   useEffect(() => {
     isMounted.current = true
@@ -138,7 +138,7 @@ export function useSignLanguage(
   const resolveDemoSrc = (src: string) => {
     if (src.startsWith('/')) return src
     if (src.startsWith('data/raw/validation_mp4/')) {
-      return `/validation_demos/${src.split('/').pop()}`
+      return `/demo-videos/${src.split('/').pop()}`
     }
     return src
   }
@@ -156,7 +156,7 @@ export function useSignLanguage(
         body: JSON.stringify({ gloss, client_id: `live-gloss-${clientIdRef.current}` }),
       })
       const data = await response.json()
-      onMessage({
+      onMessageRef.current({
         id: `${Date.now()}-live-gloss-${Math.random()}`,
         sender: 'patient',
         text: data.text || gloss,
@@ -165,7 +165,7 @@ export function useSignLanguage(
       })
     } catch (err) {
       console.error('Live gloss-to-text failed:', err)
-      onMessage({
+      onMessageRef.current({
         id: `${Date.now()}-live-gloss-fallback-${Math.random()}`,
         sender: 'patient',
         text: gloss,
@@ -173,7 +173,7 @@ export function useSignLanguage(
         label: '수어 글로스',
       })
     }
-  }, [onMessage])
+  }, [])
 
   const commitRecognizedWord = useCallback((word: string) => {
     if (isDemoModeRef.current) {
@@ -194,14 +194,14 @@ export function useSignLanguage(
       }, LIVE_GLOSS_IDLE_MS)
     }
 
-    onMessage({
+    onMessageRef.current({
       id: `${Date.now()}-${Math.random()}`,
       sender: 'patient',
       text: word,
       timestamp: new Date(),
       label: '수어 번역',
     })
-  }, [convertLiveGlossToText, onMessage])
+  }, [convertLiveGlossToText])
 
   const convertDemoGlossToText = useCallback(async (scenario: DemoScenario) => {
     const words = demoGlossBufferRef.current.length > 0
@@ -211,13 +211,14 @@ export function useSignLanguage(
     if (!gloss) return
 
     try {
+      // 💡 동적 IP 자동 감지 적용
       const response = await fetch('/api/gloss_to_text', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ gloss, client_id: `demo-gloss-${Date.now()}` }),
       })
       const data = await response.json()
-      onMessage({
+      onMessageRef.current({
         id: `${Date.now()}-demo-gloss-${Math.random()}`,
         sender: 'patient',
         text: data.text || gloss,
@@ -226,7 +227,7 @@ export function useSignLanguage(
       })
     } catch (err) {
       console.error('Demo gloss-to-text failed:', err)
-      onMessage({
+      onMessageRef.current({
         id: `${Date.now()}-demo-gloss-fallback-${Math.random()}`,
         sender: 'patient',
         text: gloss,
@@ -234,9 +235,10 @@ export function useSignLanguage(
         label: '데모 글로스',
       })
     }
-  }, [onMessage])
+  }, [])
 
   const stopCamera = useCallback(() => {
+    const wasDemoMode = isDemoModeRef.current
     if (activeStreamRef.current) {
       activeStreamRef.current.getTracks().forEach((t) => t.stop())
       activeStreamRef.current = null
@@ -258,7 +260,7 @@ export function useSignLanguage(
       window.clearTimeout(liveGlossTimerRef.current)
       liveGlossTimerRef.current = null
     }
-    if (!isDemoModeRef.current && liveGlossBufferRef.current.length > 0) {
+    if (!wasDemoMode && liveGlossBufferRef.current.length > 0) {
       void convertLiveGlossToText()
     }
     if (isMounted.current) {
@@ -278,6 +280,7 @@ export function useSignLanguage(
       const videoConstraints: MediaTrackConstraints = {
         width: { ideal: VIDEO_WIDTH },
         height: { ideal: VIDEO_HEIGHT },
+        frameRate: { ideal: 24, max: 30 },
         ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
       }
 
@@ -468,6 +471,7 @@ export function useSignLanguage(
 
   const captureAndSend = useCallback(async () => {
     if (!videoRef.current || !canvasRef.current) return
+    if (videoRef.current.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return
     if (isPredictingRef.current) return
     isPredictingRef.current = true
 
@@ -506,6 +510,7 @@ export function useSignLanguage(
       formData.append('stable_min_count', stableMinCount.toString())
       formData.append('max_missing_frames', maxMissingFrames.toString())
       formData.append('min_segment_frames', '8')
+      formData.append('tta_enabled', 'false')
       formData.append('run_model', (frameId % MODEL_INFERENCE_EVERY_N_FRAMES === 0).toString())
 
       if (abortControllerRef.current) {
@@ -514,9 +519,11 @@ export function useSignLanguage(
       abortControllerRef.current = new AbortController()
 
       try {
+        // 💡 동적 IP 자동 감지 적용
         const res = await fetch('/api/predict', { 
           method: 'POST', 
           body: formData,
+          credentials: 'include',
           signal: abortControllerRef.current.signal 
         })
         const data = await res.json()
@@ -555,32 +562,25 @@ export function useSignLanguage(
           return
         }
 
-        // 💡 [핵심 3] 수정된 Peak Detection 알고리즘 (연속 인식 가능)
         if (pred.has_hand) {
           isHandUpRef.current = true;
           
           if (pred.window_filled && pred.label && pred.confidence >= confidenceThreshold) {
-            // 케이스 A: 손을 내리지 않았는데 완전히 다른 수어 단어로 바뀌었을 때
             if (peakGestureRef.current && peakGestureRef.current.label !== pred.label) {
-              // 1. 이전까지 모아둔 단어를 먼저 채팅창으로 발송!
               commitRecognizedWord(peakGestureRef.current.label)
-              // 2. 새로운 단어로 최고점 추적 시작
               peakGestureRef.current = { label: pred.label, confidence: pred.confidence };
             } else {
-              // 케이스 B: 같은 단어라면 더 높은 점수(최고점)로 덮어쓰기
               if (!peakGestureRef.current || pred.confidence > peakGestureRef.current.confidence) {
                 peakGestureRef.current = { label: pred.label, confidence: pred.confidence };
               }
             }
           } else {
-            // 케이스 C: 손은 화면에 있는데, 확신도가 낮아지거나 동작을 풀었을 때 (휴식기 감지)
             if (peakGestureRef.current) {
               commitRecognizedWord(peakGestureRef.current.label)
-              peakGestureRef.current = null; // 발송 후 비워줌
+              peakGestureRef.current = null;
             }
           }
         } else {
-          // 케이스 D: 기존처럼 손이 카메라 밖으로 완전히 사라졌을 때
           if (isHandUpRef.current) {
             isHandUpRef.current = false;
             if (peakGestureRef.current) {
@@ -616,20 +616,20 @@ export function useSignLanguage(
   }, [isRunning, captureAndSend, captureIntervalMs])
 
   const getPredictionStatus = (prediction: Prediction): string => {
+    if (prediction.window_filled) {
+      if (!prediction.label) return '인식 불확실'
+      return `인식 중... ${prediction.label}`
+    }
     if (!prediction.has_hand) {
       const misses = prediction.missing_frames ?? 0
       const maxMisses = prediction.max_missing_frames ?? maxMissingFrames
       return misses <= maxMisses && (prediction.window_progress ?? 0) > 0
-        ? `추적 보정 중 ${misses}/${maxMisses}`
+        ? `추적 보정 중...`
         : '손을 카메라 안에 보여주세요'
     }
-    if (!prediction.window_filled) {
-      const progress = prediction.window_progress ?? 0
-      const size = prediction.window_size ?? windowSize
-      return `동작 수집 중 ${progress}/${size}`
-    }
-    if (!prediction.label) return '인식 불확실'
-    return `인식 중... ${prediction.label}`
+    const progress = prediction.window_progress ?? 0
+    const size = prediction.window_size ?? windowSize
+    return `동작 수집 중...`
   }
 
   return {
