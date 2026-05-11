@@ -13,6 +13,7 @@ export default function KioskLaunchScreen() {
 
   const [step, setStep] = useState<Step>('start')
   const [data, setData] = useState<PatientData>({ name: '', dob: '', gender: '', phone: '010' })
+  const [patientSessionSaved, setPatientSessionSaved] = useState(false)
   const dataRef = useRef(data)
 
   // 최신 데이터 동기화
@@ -37,17 +38,43 @@ export default function KioskLaunchScreen() {
     }
   }, [navigate])
 
+  useEffect(() => {
+    if (step !== 'waiting' || !patientSessionSaved) return
+
+    let cancelled = false
+
+    const checkDoctorEntered = async () => {
+      try {
+        const res = await fetch('/api/patient-session', { credentials: 'include' })
+        if (!res.ok) return
+        const session = await res.json() as { waiting?: boolean }
+        if (!cancelled && session.waiting === false) {
+          navigate('/kiosk/session', { state: { patientData: dataRef.current } })
+        }
+      } catch (err) {
+        console.warn('Failed to check patient session:', err)
+      }
+    }
+
+    const id = setInterval(checkDoctorEntered, 1500)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [step, patientSessionSaved, navigate])
+
   const go = (s: Step) => setStep(s)
 
   const handleFinish = async () => {
     setStep('waiting')
     try {
-      await fetch('/api/patient-session', {
+      const res = await fetch('/api/patient-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ patientData: dataRef.current }),
       })
+      if (res.ok) setPatientSessionSaved(true)
     } catch (err) {
       console.warn('Failed to save patient session:', err)
     }
