@@ -39,8 +39,18 @@ export default function KioskLaunchScreen() {
 
   const go = (s: Step) => setStep(s)
 
-  const handleFinish = () => {
+  const handleFinish = async () => {
     setStep('waiting')
+    try {
+      await fetch('/api/patient-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ patientData: dataRef.current }),
+      })
+    } catch (err) {
+      console.warn('Failed to save patient session:', err)
+    }
     // socket.io: 환자 도착 알림 → 서버 → 의사 대기실
     socket.emit('patient_arrived', { patientData: dataRef.current })
   }

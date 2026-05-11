@@ -17,6 +17,11 @@ interface MedicalRecord {
 
 interface DoctorLaunchScreenProps { onSessionReset?: () => void }
 
+interface PatientSessionResponse {
+    waiting: boolean;
+    patientData?: { name: string, dob: string, gender: string, phone: string } | null;
+}
+
 const TAG_STYLES: Record<string, string> = {
     증상: 'bg-red-50 text-red-500 border-red-100',
     관찰: 'bg-amber-50 text-amber-600 border-amber-100',
@@ -69,8 +74,46 @@ export default function DoctorLaunchScreen({ onSessionReset }: DoctorLaunchScree
         }
     }, [])
 
-    const handleEnter = () => {
+    useEffect(() => {
+        let cancelled = false
+
+        const pollPatientSession = async () => {
+            try {
+                const res = await fetch('/api/patient-session', { credentials: 'include' })
+                if (!res.ok) return
+                const data = await res.json() as PatientSessionResponse
+                if (cancelled) return
+
+                if (data.waiting && data.patientData) {
+                    setNotified(true)
+                    setPatientData(data.patientData)
+                } else {
+                    setNotified(false)
+                    setPatientData(null)
+                }
+            } catch (err) {
+                console.warn('Failed to fetch patient session:', err)
+            }
+        }
+
+        void pollPatientSession()
+        const id = setInterval(pollPatientSession, 1500)
+        return () => {
+            cancelled = true
+            clearInterval(id)
+        }
+    }, [])
+
+    const handleEnter = async () => {
         if (onSessionReset) onSessionReset()
+        try {
+            await fetch('/api/patient-session', {
+                method: 'DELETE',
+                credentials: 'include',
+            })
+        } catch (err) {
+            console.warn('Failed to reset patient session:', err)
+        }
         // socket.io: 의사 입장 → 서버 → 환자 키오스크에 전달
         socket.emit('doctor_ready')
         navigate('/doctor', { state: { patientData: patientDataRef.current } })

@@ -88,6 +88,12 @@ memory_misses: dict[str, int] = {}
 memory_predictions: dict[str, deque] = {}
 gloss_to_text_last_called_at: dict[str, float] = {}
 GLOSS_TO_TEXT_MIN_INTERVAL_SECONDS = 6.0
+patient_session_lock = threading.Lock()
+patient_session: dict[str, Any] = {
+    "waiting": False,
+    "patientData": None,
+    "updatedAt": None,
+}
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 CONFIG_PATH = os.environ.get("SIGN_CONFIG", str(ROOT_DIR / "config" / "web_demo.yaml"))
@@ -452,6 +458,42 @@ def generate_mjpeg_frames(camera_index: int = 0):
 @app.route("/api/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"}), 200
+
+
+@app.route("/api/patient-session", methods=["GET", "POST", "DELETE"])
+def api_patient_session():
+    if request.method == "GET":
+        with patient_session_lock:
+            return jsonify(dict(patient_session)), 200
+
+    if request.method == "DELETE":
+        with patient_session_lock:
+            patient_session.update({"waiting": False, "patientData": None, "updatedAt": None})
+            return jsonify(dict(patient_session)), 200
+
+    data = request.get_json(silent=True) or {}
+    patient_data = data.get("patientData") or data.get("patient_data") or data
+    if not isinstance(patient_data, dict):
+        return jsonify({"error": "patientData must be an object"}), 400
+
+    normalized = {
+        "name": str(patient_data.get("name", "")).strip(),
+        "dob": str(patient_data.get("dob", "")).strip(),
+        "gender": str(patient_data.get("gender", "")).strip(),
+        "phone": str(patient_data.get("phone", "")).strip(),
+    }
+    if not normalized["name"] or not normalized["phone"]:
+        return jsonify({"error": "patient name and phone are required"}), 400
+
+    with patient_session_lock:
+        patient_session.update(
+            {
+                "waiting": True,
+                "patientData": normalized,
+                "updatedAt": int(time.time()),
+            }
+        )
+        return jsonify(dict(patient_session)), 200
 
 
 @app.route("/", methods=["GET"])
