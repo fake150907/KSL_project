@@ -28,6 +28,8 @@ def _normalize_gloss(gloss: str) -> str:
 
 def _local_gloss_to_text(gloss: str) -> str:
     parts = [part.strip() for part in gloss.split("+") if part.strip()]
+    if len(parts) == 1:
+        return parts[0]
     part_set = set(parts)
 
     if {"오른쪽", "위", "통증", "못견디다"}.issubset(part_set):
@@ -76,6 +78,9 @@ def gloss_to_text(
     normalized = _normalize_gloss(gloss)
     if not normalized:
         return ""
+
+    if "+" not in normalized:
+        return normalized.strip()
 
     selected_provider = (provider or DEFAULT_PROVIDER or "anthropic").strip().lower()
     if selected_provider in {"anthropic", "claude"}:

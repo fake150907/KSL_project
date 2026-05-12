@@ -40,18 +40,12 @@ train:
   num_heads: 4
 
 realtime:
-  model_type: sequence
-  landmark_layout: mediapipe_xyz
   window_size: 32
-  capture_interval_ms: 100
   confidence_threshold: 0.75
-  stable_min_count: 3
-  max_missing_frames: 3
-  min_segment_frames: 8
-  segmentation_mode: hand_gap
+  max_missing_frames: 5
+  min_segment_frames: 5
   temperature: 0.7
   tta_enabled: true
-  cooldown_seconds: 1.0
 
 services:
   tts_backend: local

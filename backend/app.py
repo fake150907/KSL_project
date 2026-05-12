@@ -88,6 +88,7 @@ app.register_blueprint(notification_bp)
 memory_windows: dict[str, list[np.ndarray]] = {}
 memory_misses: dict[str, int] = {}
 memory_predictions: dict[str, deque] = {}
+session_configs: dict[str, dict] = {}
 gloss_to_text_last_called_at: dict[str, float] = {}
 GLOSS_TO_TEXT_MIN_INTERVAL_SECONDS = 6.0
 patient_session_lock = threading.Lock()
@@ -117,11 +118,10 @@ except Exception as exc:
         "data": {"sequence_length": 32},
         "preprocess": {"feature_dims": 3, "normalize": True},
         "realtime": {
-            "landmark_layout": "mediapipe_xyz",
-            "confidence_threshold": 0.35,
-            "stable_min_count": 1,
-            "max_missing_frames": 3,
-            "temperature": 0.9,
+            "confidence_threshold": 0.75,
+            "max_missing_frames": 5,
+            "min_segment_frames": 5,
+            "temperature": 0.7,
             "tta_enabled": True,
         },
     }
@@ -283,6 +283,17 @@ def set_session_misses(client_id: str, misses: int) -> None:
     memory_misses[client_id] = max(0, misses)
 
 
+def get_session_config(client_id: str) -> dict:
+    return session_configs.get(client_id, {})
+
+
+def resolve_session_param(client_id: str, key: str, default: Any) -> Any:
+    cfg = get_session_config(client_id)
+    if key in cfg:
+        return cfg[key]
+    return config.get("realtime", {}).get(key, default)
+
+
 def get_prediction_history(client_id: str) -> deque:
     if client_id not in memory_predictions:
         memory_predictions[client_id] = deque(maxlen=5)
@@ -340,15 +351,14 @@ def top_predictions_from_probs(
 def predict_live(
     model_type: str,
     tensor: np.ndarray,
-    temperature: float | None = None,
+    temperature: float = 0.7,
 ) -> tuple[str | None, float, list[dict[str, float | str]]]:
     model, labels = get_sequence_model_bundle(model_type)
     if not model or not labels:
         return None, 0.0, []
     with torch.no_grad():
         logits = model(torch.tensor(tensor[None, ...], dtype=torch.float32))[0].numpy()
-    temp = max(float(temperature or config.get("realtime", {}).get("temperature", 1.0)), 1e-6)
-    probs = softmax(logits / temp)
+    probs = softmax(logits / max(temperature, 1e-6))
     return top_predictions_from_probs(probs, labels)
 
 
@@ -407,15 +417,15 @@ def frames_to_model_tensor(model_type: str, frames: list[np.ndarray]) -> np.ndar
 def predict_sequence_frames(
     model_type: str,
     frames: list[np.ndarray],
-    temperature: float | None = None,
-    use_tta: bool | None = None,
+    temperature: float = 0.7,
+    use_tta: bool = True,
 ) -> tuple[str | None, float, list[dict[str, float | str]], int]:
     model, labels = get_sequence_model_bundle(model_type)
     if not model or not labels:
         return None, 0.0, [], 0
 
-    temp = max(float(temperature or config.get("realtime", {}).get("temperature", 1.0)), 1e-6)
-    tta_enabled = bool(config.get("realtime", {}).get("tta_enabled", True)) if use_tta is None else bool(use_tta)
+    temp = max(temperature, 1e-6)
+    tta_enabled = use_tta
     variants = build_segment_tta_variants(frames) if tta_enabled else [smooth_segment_frames(frames)]
     probs_list: list[np.ndarray] = []
 
@@ -675,6 +685,28 @@ def video_feed():
     )
 
 
+@app.route("/api/session-config", methods=["POST"])
+def set_session_config():
+    data = request.get_json() or {}
+    client_id = data.get("client_id", "default")
+    realtime_cfg = config.get("realtime", {})
+    sequence_length = int(config["data"]["sequence_length"])
+
+    requested_window_size = int(data.get("window_size", realtime_cfg.get("window_size", sequence_length)))
+    tta_raw = data.get("tta_enabled", realtime_cfg.get("tta_enabled", True))
+
+    session_configs[client_id] = {
+        "model_type": normalize_model_type(data.get("model_type", "cnn_gru")),
+        "confidence_threshold": float(data.get("confidence_threshold", realtime_cfg.get("confidence_threshold", 0.75))),
+        "window_size": max(8, min(requested_window_size, sequence_length)),
+        "max_missing_frames": int(data.get("max_missing_frames", realtime_cfg.get("max_missing_frames", 5))),
+        "min_segment_frames": int(data.get("min_segment_frames", realtime_cfg.get("min_segment_frames", 5))),
+        "temperature": float(data.get("temperature", realtime_cfg.get("temperature", 0.7))),
+        "tta_enabled": str(tta_raw).lower() not in {"false", "0", "no"},
+    }
+    return jsonify({"status": "ok", "client_id": client_id}), 200
+
+
 @app.route("/api/predict", methods=["POST"])
 def predict():
     session.modified = False
@@ -688,56 +720,22 @@ def predict():
         if "frame" not in request.files:
             return jsonify({"error": "No frame provided"}), 400
 
-        model_type = normalize_model_type(request.form.get("model_type", "sequence"))
-        landmark_layout = request.form.get("landmark_layout", "mediapipe_xyz")
-        if landmark_layout != "mediapipe_xyz":
-            return jsonify({"error": f"Unsupported landmark_layout: {landmark_layout}"}), 400
-
         client_id = request.form.get("client_id", "default")
         frame_id = request.form.get("frame_id", "")
-        confidence_threshold = float(
-            request.form.get(
-                "confidence_threshold",
-                config.get("realtime", {}).get("confidence_threshold", 0.35),
-            )
-        )
-        requested_window_size = int(
-            request.form.get(
-                "window_size",
-                config.get("realtime", {}).get("window_size", config["data"]["sequence_length"]),
-            )
-        )
+
         sequence_length = int(config["data"]["sequence_length"])
-        window_size = max(8, min(requested_window_size, sequence_length))
-        stable_min_count = int(
-            request.form.get("stable_min_count", config.get("realtime", {}).get("stable_min_count", 2))
-        )
-        max_missing_frames = int(
-            request.form.get("max_missing_frames", config.get("realtime", {}).get("max_missing_frames", 3))
-        )
-        min_segment_frames = int(
-            request.form.get("min_segment_frames", config.get("realtime", {}).get("min_segment_frames", 8))
-        )
-        temperature = float(request.form.get("temperature", config.get("realtime", {}).get("temperature", 0.9)))
-        use_tta = request.form.get("tta_enabled", str(config.get("realtime", {}).get("tta_enabled", True))).lower() not in {
-            "false",
-            "0",
-            "no",
-        }
-        run_model = request.form.get("run_model", "true").lower() != "false"
+        model_type: str = resolve_session_param(client_id, "model_type", "cnn_gru")
+        confidence_threshold: float = resolve_session_param(client_id, "confidence_threshold", 0.75)
+        window_size: int = resolve_session_param(client_id, "window_size", sequence_length)
+        max_missing_frames: int = resolve_session_param(client_id, "max_missing_frames", 5)
+        min_segment_frames: int = resolve_session_param(client_id, "min_segment_frames", 5)
+        temperature: float = resolve_session_param(client_id, "temperature", 0.7)
+        use_tta: bool = resolve_session_param(client_id, "tta_enabled", True)
 
         frame_file = request.files["frame"]
         image_pil = Image.open(io.BytesIO(frame_file.read())).convert("RGB")
         image_rgb = np.array(image_pil)
         height, width = image_rgb.shape[:2]
-        scale = min(320 / width, 180 / height, 1)
-        if scale < 1:
-            image_rgb = cv2.resize(
-                image_rgb,
-                (int(width * scale), int(height * scale)),
-                interpolation=cv2.INTER_AREA,
-            )
-        processed_height, processed_width = image_rgb.shape[:2]
 
         with mp_holistic_lock:
             results = mp_holistic_instance.process(image_rgb)
@@ -766,16 +764,9 @@ def predict():
             "max_missing_frames": max_missing_frames,
             "min_segment_frames": min_segment_frames,
             "segment_frames": None,
-            "sequence_length": sequence_length,
-            "temperature": temperature,
-            "tta_enabled": use_tta,
-            "run_model": run_model,
             "top_predictions": [],
             "frame_id": frame_id,
-            "landmark_layout": landmark_layout,
-            "model_type": model_type,
             "input_size": {"width": int(width), "height": int(height)},
-            "processed_size": {"width": int(processed_width), "height": int(processed_height)},
         }
 
         can_collect_sequence = mediapipe_landmarks_to_frame is not None
@@ -785,11 +776,23 @@ def predict():
             prediction["missing_frames"] = 0
             frame_points = mediapipe_landmarks_to_frame(results)
             window.append(frame_points)
-            prediction["window_progress"] = len(window)
+            window_len = len(window)
+            prediction["window_progress"] = window_len
             prediction["window_size"] = window_size
             prediction["window_filled"] = False
             prediction["segmenting"] = True
             prediction["status"] = "수어 단어 구간 수집 중"
+
+            if window_len >= min_segment_frames and (window_len - min_segment_frames) % 5 == 0:
+                roll_label, roll_conf, roll_top, _ = predict_sequence_frames(
+                    model_type, list(window), temperature=temperature, use_tta=False
+                )
+                if roll_label and roll_conf >= confidence_threshold:
+                    prediction["label"] = roll_label
+                    prediction["confidence"] = roll_conf
+                    prediction["top_predictions"] = roll_top
+                    prediction["window_filled"] = True
+                    prediction["status"] = f"인식 중... {roll_label}"
         elif has_hand:
             set_session_misses(client_id, 0)
             prediction["missing_frames"] = 0
@@ -838,32 +841,26 @@ def predict():
             else:
                 prediction["window_progress"] = len(window)
 
-        top_log = json.dumps(prediction.get("top_predictions", []), ensure_ascii=False)
         process_ms = (time.perf_counter() - request_started_at) * 1000
         prediction["process_ms"] = round(process_ms, 1)
-        print(
-            "Prediction: "
-            f"frame_id={frame_id}, "
-            f"process_ms={process_ms:.1f}, "
-            f"input={width}x{height}, "
-            f"processed={processed_width}x{processed_height}, "
-            f"label={prediction.get('label')}, "
-            f"conf={prediction.get('confidence'):.2f}, "
-            f"raw={prediction.get('raw_label')}/{prediction.get('raw_confidence')}, "
-            f"has_hand={prediction.get('has_hand')}, "
-            f"has_pose={prediction.get('has_pose')}, "
-            f"window={prediction.get('window_progress')}/{prediction.get('window_size')}, "
-            f"segment_frames={prediction.get('segment_frames')}, "
-            f"min_segment_frames={prediction.get('min_segment_frames')}, "
-            f"sequence_length={prediction.get('sequence_length')}, "
-            f"miss={prediction.get('missing_frames')}/{prediction.get('max_missing_frames')}, "
-            f"window_filled={prediction.get('window_filled')}, "
-            f"run_model={prediction.get('run_model')}, "
-            f"temp={prediction.get('temperature')}, "
-            f"tta={prediction.get('tta_count')}, "
-            f"top={top_log}",
-            flush=True,
-        )
+
+        if prediction.get("segment_finalized"):
+            top_log = json.dumps(prediction.get("top_predictions", []), ensure_ascii=False)
+            print(
+                f"[segment] frame={frame_id} ms={process_ms:.1f} "
+                f"frames={prediction.get('segment_frames')} "
+                f"label={prediction.get('label')} conf={prediction.get('confidence'):.2f} "
+                f"raw={prediction.get('raw_label')}/{prediction.get('raw_confidence')} "
+                f"tta={prediction.get('tta_count')} top={top_log}",
+                flush=True,
+            )
+        else:
+            print(
+                f"[frame] id={frame_id} ms={process_ms:.1f} "
+                f"hand={has_hand} window={len(window)}/{window_size} "
+                f"miss={prediction.get('missing_frames')}/{max_missing_frames}"
+            )
+
         return jsonify({"frame_id": frame_id, "prediction": prediction}), 200
     except Exception as exc:
         print(f"Prediction error: {exc}")
