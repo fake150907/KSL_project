@@ -3,10 +3,9 @@ import type { Prediction, ChatMessage } from '../types'
 
 const VIDEO_WIDTH = 640
 const VIDEO_HEIGHT = 480
-const PREDICT_FRAME_WIDTH = 424
-const PREDICT_FRAME_HEIGHT = 320
+const PREDICT_FRAME_WIDTH = 240
+const PREDICT_FRAME_HEIGHT = 180
 const JPEG_QUALITY = 0.72
-const MODEL_INFERENCE_EVERY_N_FRAMES = 5
 const DEMO_PLAYBACK_RATE = 0.65
 const LIVE_GLOSS_IDLE_MS = 6500
 
@@ -52,7 +51,6 @@ interface SignLanguageConfig {
   modelType?: 'cnn_gru' | 'lstm'
   confidenceThreshold?: number
   windowSize?: number
-  stableMinCount?: number
   captureIntervalMs?: number
   maxMissingFrames?: number
 }
@@ -65,7 +63,6 @@ export function useSignLanguage(
     modelType = 'cnn_gru',
     confidenceThreshold = 0.30,
     windowSize = 32,
-    stableMinCount = 1,
     captureIntervalMs = 60,
     maxMissingFrames = 3,
   } = config
@@ -123,6 +120,25 @@ export function useSignLanguage(
       }
     }
   }, [])
+
+  const initSession = useCallback(async (clientId: string, ttaEnabled: boolean) => {
+    try {
+      await fetch('/api/session-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_id: clientId,
+          model_type: modelType === 'cnn_gru' ? 'cnn_gru' : 'lstm',
+          confidence_threshold: confidenceThreshold,
+          window_size: windowSize,
+          max_missing_frames: maxMissingFrames,
+          tta_enabled: ttaEnabled,
+        }),
+      })
+    } catch (err) {
+      console.error('[initSession] Failed:', err)
+    }
+  }, [modelType, confidenceThreshold, windowSize, maxMissingFrames])
 
   const refreshVideoDevices = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return
@@ -270,15 +286,7 @@ export function useSignLanguage(
         const formData = new FormData()
         formData.append('frame', blob)
         formData.append('frame_id', frameId.toString())
-        formData.append('model_type', modelType === 'cnn_gru' ? 'sequence' : 'lstm')
-        formData.append('landmark_layout', 'mediapipe_xyz')
         formData.append('client_id', clientIdRef.current)
-        formData.append('confidence_threshold', confidenceThreshold.toString())
-        formData.append('window_size', windowSize.toString())
-        formData.append('stable_min_count', stableMinCount.toString())
-        formData.append('max_missing_frames', maxMissingFrames.toString())
-        formData.append('min_segment_frames', '8')
-        formData.append('run_model', 'true')
 
         const res = await fetch('/api/predict', { method: 'POST', body: formData })
         const data = await res.json().catch(() => ({}))
@@ -316,9 +324,6 @@ export function useSignLanguage(
     confidenceThreshold,
     createBlankFrameBlob,
     maxMissingFrames,
-    modelType,
-    stableMinCount,
-    windowSize,
   ])
 
   const stopCamera = useCallback(() => {
@@ -393,6 +398,7 @@ export function useSignLanguage(
       }
 
       await video.play()
+      await initSession(clientIdRef.current, false)
       if (isMounted.current) setIsRunning(true)
       await refreshVideoDevices()
     } catch (err) {
@@ -402,7 +408,7 @@ export function useSignLanguage(
         activeStreamRef.current = null
       }
     }
-  }, [stopCamera, refreshVideoDevices])
+  }, [stopCamera, refreshVideoDevices, initSession])
 
   const playDemoClip = useCallback(async (scenario: DemoScenario, clipIndex: number) => {
     const video = videoRef.current
@@ -419,6 +425,7 @@ export function useSignLanguage(
     setCurrentPrediction(null)
     isPredictingRef.current = false
     clientIdRef.current = `demo-${scenario.label}-${clip.label}-${Date.now()}`
+    await initSession(clientIdRef.current, true)
     demoScenarioRef.current = scenario
     demoClipIndexRef.current = clipIndex
     isDemoModeRef.current = true
@@ -453,7 +460,7 @@ export function useSignLanguage(
     })
 
     await video.play()
-  }, [clearLandmarkOverlay])
+  }, [clearLandmarkOverlay, initSession])
 
   const startDemoScenario = useCallback(async (scenario: DemoScenario) => {
     stopCamera()
@@ -597,16 +604,7 @@ export function useSignLanguage(
       const formData = new FormData()
       formData.append('frame', blob)
       formData.append('frame_id', frameId.toString())
-      formData.append('model_type', modelType === 'cnn_gru' ? 'sequence' : 'lstm')
-      formData.append('landmark_layout', 'mediapipe_xyz')
       formData.append('client_id', clientIdRef.current)
-      formData.append('confidence_threshold', confidenceThreshold.toString())
-      formData.append('window_size', windowSize.toString())
-      formData.append('stable_min_count', stableMinCount.toString())
-      formData.append('max_missing_frames', maxMissingFrames.toString())
-      formData.append('min_segment_frames', '8')
-      formData.append('tta_enabled', 'false')
-      formData.append('run_model', (frameId % MODEL_INFERENCE_EVERY_N_FRAMES === 0).toString())
 
       if (abortControllerRef.current) {
         abortControllerRef.current.abort()
@@ -693,7 +691,7 @@ export function useSignLanguage(
         isPredictingRef.current = false
       }
     }, 'image/jpeg', JPEG_QUALITY)
-  }, [modelType, confidenceThreshold, windowSize, stableMinCount, maxMissingFrames, commitRecognizedWord, drawLandmarks])
+  }, [confidenceThreshold, commitRecognizedWord, drawLandmarks])
 
   useEffect(() => {
     refreshVideoDevices()
@@ -749,8 +747,6 @@ export function useSignLanguage(
         ? `추적 보정 중...`
         : '손을 카메라 안에 보여주세요'
     }
-    const progress = prediction.window_progress ?? 0
-    const size = prediction.window_size ?? windowSize
     return `동작 수집 중...`
   }
 
