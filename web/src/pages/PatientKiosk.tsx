@@ -39,10 +39,10 @@ export default function PatientKiosk({
   const [sendStatus, setSendStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
   const [sendError, setSendError] = useState('')
   const [showPopup, setShowPopup] = useState(false)
+  const [cachedSummary, setCachedSummary] = useState('')
   const [showDemoList, setShowDemoList] = useState(false)
   const [predictionLog, setPredictionLog] = useState<Array<{ label: string; confidence: number; timestamp: number }>>([])
 
-  // ✅ 수정됨: 수어 인식 메시지를 socket으로도 전송하는 래퍼
   const handleNewMessageFromKiosk = useCallback((msg: ChatMessageType) => {
     onNewMessage(msg)                    // 자기 화면 업데이트
     socket.emit('chat_message', msg)     // ✅ 의사에게 전송
@@ -61,7 +61,6 @@ export default function PatientKiosk({
     registerRole('kiosk')
   }, [])
 
-  // ✅ 수정됨: 의사가 보낸 채팅 메시지 수신
   useEffect(() => {
     const handleIncomingMessage = (msg: ChatMessageType) => {
       onNewMessage(msg)
@@ -93,16 +92,51 @@ export default function PatientKiosk({
     const handleSessionEnd = () => {
       stopCamera()
       setIsWaitingForDoctor(false)
-      setShowPopup(true)
       setSendStatus('idle')
       setSendError('')
+
+      // ✅ 요약 생성 후 소켓으로 의사 쪽에 전달 (카카오 전송 여부와 무관)
+      const saveSummary = async () => {
+        let summaryText = buildChatText()
+        try {
+          const res = await fetch('/api/summary', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ conversation: buildClinicalSummaryInput() }),
+          })
+          const data = await res.json().catch(() => ({}))
+          
+          if (res.ok && data.summary) {
+             summaryText = data.summary
+          } else {
+             // API 응답이 정상이 아닐 경우 콘솔에 에러 출력
+             console.error("요약 API 호출 실패:", data.error || res.statusText)
+          }
+        } catch (error) { 
+          // 네트워크 오류 등 예외 발생 시 콘솔에 출력 후 폴백 텍스트 사용
+          console.error("요약 요청 중 네트워크 예외 발생:", error)
+        }
+
+        setCachedSummary(summaryText)
+
+        socket.emit('diagnosis_summary_saved', {
+          patientName: actualPatientName,
+          patientPhone: actualPatientPhone,
+          diagnosisSummary: summaryText,
+          isSent: false,
+          deliveryStatus: 'pending',
+        })
+
+        setShowPopup(true)
+      }
+      void saveSummary()
     }
 
     socket.on('session_end', handleSessionEnd)
     return () => {
       socket.off('session_end', handleSessionEnd)
     }
-  }, [stopCamera])
+  }, [stopCamera, actualPatientPhone, actualPatientName, messages])
 
   // WebRTC
   useEffect(() => {
@@ -263,29 +297,13 @@ export default function PatientKiosk({
       return; 
     }
 
-    // 💡 [STEP 2] 토큰이 있다면 전송 시작
+    // 💡 [STEP 2] 토큰이 있다면 전송 시작 (session_end 시 이미 생성된 요약 재사용)
     setSendStatus('sending')
     setSendError('')
 
-    const conversation = messages.map((m) => `${m.sender === 'doctor' ? '의사' : '환자'}: ${m.text}`)
-    const chatText = buildChatText()
-    let summaryText = chatText
+    const summaryText = cachedSummary || buildChatText()
 
     try {
-      // AI 요약 시도
-      if (conversation.length > 0) {
-        const summaryRes = await fetch('/api/summary', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ conversation }),
-        })
-        if (summaryRes.ok) {
-          const summaryData = await summaryRes.json().catch(() => ({}))
-          summaryText = summaryData.summary || chatText
-        }
-      }
-
       // 실제 카카오톡 발송
       const res = await fetch('/api/notify/kakao', {
         method: 'POST',
@@ -303,25 +321,96 @@ export default function PatientKiosk({
 
       // 전송 성공 시 UI 업데이트 (사용자는 여기서 '확인' 버튼을 보게 됩니다)
       setSendStatus('sent')
-      
-      // 로컬 장부 기록 (기존 로직 유지)
-      // saveDiagnosisSummary('kakao_sent') 등...
-      
+
+      // ✅ 소켓 emit → DoctorLaunchScreen의 applyDiagnosisSummary 트리거
+      const sentAt = new Date().toISOString()
+      socket.emit('diagnosis_summary_saved', {
+        patientName: actualPatientName,
+        patientPhone: actualPatientPhone,
+        diagnosisSummary: summaryText,
+        isSent: true,
+        deliveryStatus: 'kakao_sent',
+        sentAt,
+      })
+
+      // ✅ localStorage 직접 패치 (모달 바로 열어도 반영되도록)
+      const savedRecords = JSON.parse(localStorage.getItem('medical_records') || '[]')
+      const normalizedPhone = actualPatientPhone.replace(/\D/g, '')
+      const recIdx = savedRecords.findIndex((r: { patientPhone?: string }) =>
+        (r.patientPhone || '').replace(/\D/g, '') === normalizedPhone
+      )
+      if (recIdx >= 0) {
+        savedRecords[recIdx] = { ...savedRecords[recIdx], diagnosisSummary: summaryText, isSent: true, deliveryStatus: 'kakao_sent', sentAt }
+        localStorage.setItem('medical_records', JSON.stringify(savedRecords))
+      }
+
     } catch (err) {
+      // ✅ 실패 시 클립보드 복사 후 소켓/localStorage 업데이트
+      try { await navigator.clipboard.writeText(summaryText) } catch { /* ignore */ }
+
+      const sentAt = new Date().toISOString()
+      socket.emit('diagnosis_summary_saved', {
+        patientName: actualPatientName,
+        patientPhone: actualPatientPhone,
+        diagnosisSummary: summaryText,
+        isSent: false,
+        deliveryStatus: 'clipboard_copied',
+        sentAt,
+      })
+
+      const savedRecords = JSON.parse(localStorage.getItem('medical_records') || '[]')
+      const normalizedPhone = actualPatientPhone.replace(/\D/g, '')
+      const recIdx = savedRecords.findIndex((r: { patientPhone?: string }) =>
+        (r.patientPhone || '').replace(/\D/g, '') === normalizedPhone
+      )
+      if (recIdx >= 0) {
+        savedRecords[recIdx] = { ...savedRecords[recIdx], diagnosisSummary: summaryText, isSent: false, deliveryStatus: 'clipboard_copied', sentAt }
+        localStorage.setItem('medical_records', JSON.stringify(savedRecords))
+      }
+
       setSendError(err instanceof Error ? err.message : '전송 실패');
       setSendStatus('error');
     }
   }
 
-  const handleClosePopup = () => { 
-    // 💡 [STEP 3] 보안을 위해 카카오 관련 정보만 삭제 (다른 기록은 유지)
+  const handleClosePopup = () => {
     localStorage.removeItem('KAKAO_ACCESS_TOKEN');
     localStorage.removeItem('KAKAO_REFRESH_TOKEN');
 
-    // 💡 [STEP 4] 시작 화면으로 이동
+    // 카카오 전송 완료 상태면 이미 kakao_sent로 저장됐으므로 덮어쓰지 않음
+    if (sendStatus !== 'sent') {
+      const summaryText = cachedSummary || buildChatText()
+      const sentAt = new Date().toISOString()
+
+      socket.emit('diagnosis_summary_saved', {
+        patientName: actualPatientName,
+        patientPhone: actualPatientPhone,
+        diagnosisSummary: summaryText,
+        isSent: false,
+        deliveryStatus: 'pending',
+        sentAt,
+      })
+
+      const savedRecords = JSON.parse(localStorage.getItem('medical_records') || '[]')
+      const normalizedPhone = actualPatientPhone.replace(/\D/g, '')
+      const recIdx = savedRecords.findIndex((r: { patientPhone?: string }) =>
+        (r.patientPhone || '').replace(/\D/g, '') === normalizedPhone
+      )
+      if (recIdx >= 0) {
+        savedRecords[recIdx] = {
+          ...savedRecords[recIdx],
+          diagnosisSummary: summaryText,
+          isSent: false,
+          deliveryStatus: 'pending',
+          sentAt,
+        }
+        localStorage.setItem('medical_records', JSON.stringify(savedRecords))
+      }
+    }
+
     setShowPopup(false)
-    onSessionReset?.() // 메시지 내역 등 초기화
-    navigate('/kiosk') 
+    onSessionReset?.()
+    navigate('/kiosk')
   }
   const handleDemoSelect = (scenario: DemoScenario) => {
     setShowDemoList(false)

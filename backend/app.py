@@ -1,5 +1,8 @@
 ﻿from __future__ import annotations
 
+from dotenv import load_dotenv
+load_dotenv()  # .env 파일을 config import 전에 로드
+
 import io
 import json
 import os
