@@ -295,7 +295,7 @@ export default function PatientKiosk({
     setSendStatus('sending')
     setSendError('')
 
-    const summaryText = cachedSummary || buildChatText().join('\n')
+    const summaryText = cachedSummary || buildChatText()
 
     try {
       // 실제 카카오톡 발송
@@ -371,33 +371,35 @@ export default function PatientKiosk({
     localStorage.removeItem('KAKAO_ACCESS_TOKEN');
     localStorage.removeItem('KAKAO_REFRESH_TOKEN');
 
-    // "아니요" 선택 시에도 의사 화면에 대화 내역 저장
-    const summaryText = cachedSummary || buildChatText()
-    const sentAt = new Date().toISOString()
+    // 카카오 전송 완료 상태면 이미 kakao_sent로 저장됐으므로 덮어쓰지 않음
+    if (sendStatus !== 'sent') {
+      const summaryText = cachedSummary || buildChatText()
+      const sentAt = new Date().toISOString()
 
-    socket.emit('diagnosis_summary_saved', {
-      patientName: actualPatientName,
-      patientPhone: actualPatientPhone,
-      diagnosisSummary: summaryText,
-      isSent: false,
-      deliveryStatus: 'pending',
-      sentAt,
-    })
-
-    const savedRecords = JSON.parse(localStorage.getItem('medical_records') || '[]')
-    const normalizedPhone = actualPatientPhone.replace(/\D/g, '')
-    const recIdx = savedRecords.findIndex((r: { patientPhone?: string }) =>
-      (r.patientPhone || '').replace(/\D/g, '') === normalizedPhone
-    )
-    if (recIdx >= 0) {
-      savedRecords[recIdx] = {
-        ...savedRecords[recIdx],
+      socket.emit('diagnosis_summary_saved', {
+        patientName: actualPatientName,
+        patientPhone: actualPatientPhone,
         diagnosisSummary: summaryText,
         isSent: false,
         deliveryStatus: 'pending',
         sentAt,
+      })
+
+      const savedRecords = JSON.parse(localStorage.getItem('medical_records') || '[]')
+      const normalizedPhone = actualPatientPhone.replace(/\D/g, '')
+      const recIdx = savedRecords.findIndex((r: { patientPhone?: string }) =>
+        (r.patientPhone || '').replace(/\D/g, '') === normalizedPhone
+      )
+      if (recIdx >= 0) {
+        savedRecords[recIdx] = {
+          ...savedRecords[recIdx],
+          diagnosisSummary: summaryText,
+          isSent: false,
+          deliveryStatus: 'pending',
+          sentAt,
+        }
+        localStorage.setItem('medical_records', JSON.stringify(savedRecords))
       }
-      localStorage.setItem('medical_records', JSON.stringify(savedRecords))
     }
 
     setShowPopup(false)
