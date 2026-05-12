@@ -308,8 +308,16 @@ export function useSignLanguage(
         setCurrentPrediction(pred)
 
         if (prediction.segment_finalized) {
-          if (pred.label && pred.confidence >= confidenceThreshold) {
-            commitRecognizedWord(pred.label)
+          const peak = peakGestureRef.current
+          peakGestureRef.current = null
+
+          const finalOk = pred.label && (pred.confidence ?? 0) >= confidenceThreshold
+          const peakOk  = peak && peak.confidence >= confidenceThreshold
+
+          if (finalOk) {
+            commitRecognizedWord(pred.label!)
+          } else if (peakOk) {
+            commitRecognizedWord(peak!.label)
           }
           break
         }
@@ -647,40 +655,30 @@ export function useSignLanguage(
         
         setCurrentPrediction(pred)
         if (data.prediction.segment_finalized) {
+          const peak = peakGestureRef.current
           isHandUpRef.current = false
           peakGestureRef.current = null
-          if (pred.label && pred.confidence >= confidenceThreshold) {
-            commitRecognizedWord(pred.label)
+
+          const finalOk = pred.label && (pred.confidence ?? 0) >= confidenceThreshold
+          const peakOk  = peak && peak.confidence >= confidenceThreshold
+
+          if (finalOk) {
+            commitRecognizedWord(pred.label!)
+          } else if (peakOk) {
+            commitRecognizedWord(peak!.label)
           }
           return
         }
 
         if (pred.has_hand) {
-          isHandUpRef.current = true;
-          
-          if (pred.window_filled && pred.label && pred.confidence >= confidenceThreshold) {
-            if (peakGestureRef.current && peakGestureRef.current.label !== pred.label) {
-              commitRecognizedWord(peakGestureRef.current.label)
-              peakGestureRef.current = { label: pred.label, confidence: pred.confidence };
-            } else {
-              if (!peakGestureRef.current || pred.confidence > peakGestureRef.current.confidence) {
-                peakGestureRef.current = { label: pred.label, confidence: pred.confidence };
-              }
-            }
-          } else {
-            if (peakGestureRef.current) {
-              commitRecognizedWord(peakGestureRef.current.label)
-              peakGestureRef.current = null;
+          isHandUpRef.current = true
+          if (pred.window_filled && pred.label && (pred.confidence ?? 0) >= confidenceThreshold) {
+            if (!peakGestureRef.current || (pred.confidence ?? 0) > peakGestureRef.current.confidence) {
+              peakGestureRef.current = { label: pred.label, confidence: pred.confidence ?? 0 }
             }
           }
         } else {
-          if (isHandUpRef.current) {
-            isHandUpRef.current = false;
-            if (peakGestureRef.current) {
-              commitRecognizedWord(peakGestureRef.current.label)
-              peakGestureRef.current = null;
-            }
-          }
+          isHandUpRef.current = false
         }
         
       } catch (err: any) {

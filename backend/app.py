@@ -119,8 +119,8 @@ except Exception as exc:
         "preprocess": {"feature_dims": 3, "normalize": True},
         "realtime": {
             "confidence_threshold": 0.75,
-            "max_missing_frames": 3,
-            "min_segment_frames": 8,
+            "max_missing_frames": 5,
+            "min_segment_frames": 5,
             "temperature": 0.7,
             "tta_enabled": True,
         },
@@ -699,8 +699,8 @@ def set_session_config():
         "model_type": normalize_model_type(data.get("model_type", "cnn_gru")),
         "confidence_threshold": float(data.get("confidence_threshold", realtime_cfg.get("confidence_threshold", 0.75))),
         "window_size": max(8, min(requested_window_size, sequence_length)),
-        "max_missing_frames": int(data.get("max_missing_frames", realtime_cfg.get("max_missing_frames", 3))),
-        "min_segment_frames": int(data.get("min_segment_frames", realtime_cfg.get("min_segment_frames", 8))),
+        "max_missing_frames": int(data.get("max_missing_frames", realtime_cfg.get("max_missing_frames", 5))),
+        "min_segment_frames": int(data.get("min_segment_frames", realtime_cfg.get("min_segment_frames", 5))),
         "temperature": float(data.get("temperature", realtime_cfg.get("temperature", 0.7))),
         "tta_enabled": str(tta_raw).lower() not in {"false", "0", "no"},
     }
@@ -727,8 +727,8 @@ def predict():
         model_type: str = resolve_session_param(client_id, "model_type", "cnn_gru")
         confidence_threshold: float = resolve_session_param(client_id, "confidence_threshold", 0.75)
         window_size: int = resolve_session_param(client_id, "window_size", sequence_length)
-        max_missing_frames: int = resolve_session_param(client_id, "max_missing_frames", 3)
-        min_segment_frames: int = resolve_session_param(client_id, "min_segment_frames", 8)
+        max_missing_frames: int = resolve_session_param(client_id, "max_missing_frames", 5)
+        min_segment_frames: int = resolve_session_param(client_id, "min_segment_frames", 5)
         temperature: float = resolve_session_param(client_id, "temperature", 0.7)
         use_tta: bool = resolve_session_param(client_id, "tta_enabled", True)
 
@@ -776,11 +776,23 @@ def predict():
             prediction["missing_frames"] = 0
             frame_points = mediapipe_landmarks_to_frame(results)
             window.append(frame_points)
-            prediction["window_progress"] = len(window)
+            window_len = len(window)
+            prediction["window_progress"] = window_len
             prediction["window_size"] = window_size
             prediction["window_filled"] = False
             prediction["segmenting"] = True
             prediction["status"] = "수어 단어 구간 수집 중"
+
+            if window_len >= min_segment_frames and (window_len - min_segment_frames) % 5 == 0:
+                roll_label, roll_conf, roll_top, _ = predict_sequence_frames(
+                    model_type, list(window), temperature=temperature, use_tta=False
+                )
+                if roll_label and roll_conf >= confidence_threshold:
+                    prediction["label"] = roll_label
+                    prediction["confidence"] = roll_conf
+                    prediction["top_predictions"] = roll_top
+                    prediction["window_filled"] = True
+                    prediction["status"] = f"인식 중... {roll_label}"
         elif has_hand:
             set_session_misses(client_id, 0)
             prediction["missing_frames"] = 0
