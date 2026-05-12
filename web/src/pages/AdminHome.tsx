@@ -1,5 +1,7 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { LayoutDashboard, PlayCircle, BarChart3, ScrollText, Settings } from 'lucide-react'
+
 
 interface AdminHomeProps {
   onLogout: () => void
@@ -11,13 +13,13 @@ type LogLevel = 'all' | 'info' | 'success' | 'warning' | 'error'
 
 const SETTINGS_KEY = 'ksl-admin-settings'
 
-const navItems: Array<{ id: AdminView; label: string; description: string; icon: string }> = [
-  { id: 'dashboard', label: '대시보드', description: '운영 현황', icon: 'D' },
-  { id: 'system', label: '시스템 시작', description: '환자/의사 실행', icon: 'P' },
-  { id: 'statistics', label: '통계 보기', description: '사용 지표', icon: 'S' },
-  { id: 'logs', label: '로그 확인', description: '시스템 로그', icon: 'L' },
-  { id: 'settings', label: '설정', description: '관리자 설정', icon: 'G' },
-]
+const navItems = [
+  { id: 'dashboard', label: '대시보드', description: '운영 현황', Icon: LayoutDashboard },
+  { id: 'system', label: '시스템 시작', description: '환자/의사 실행', Icon: PlayCircle },
+  { id: 'statistics', label: '통계 보기', description: '사용 지표', Icon: BarChart3 },
+  { id: 'logs', label: '로그 확인', description: '시스템 로그', Icon: ScrollText },
+  { id: 'settings', label: '설정', description: '관리자 설정', Icon: Settings },
+] as const
 
 const defaultSettings = {
   kioskName: '수어 진료 키오스크',
@@ -113,7 +115,7 @@ export default function AdminHome({ onLogout, onSessionReset }: AdminHomeProps) 
   }
 
   return (
-    <main className="min-h-screen bg-[#111827] text-[#e5e7eb]">
+    <main className="h-screen overflow-y-auto bg-[#111827] text-[#e5e7eb]">
       {sidebarOpen && <button className="fixed inset-0 z-40 bg-black/50 lg:hidden" onClick={() => setSidebarOpen(false)} aria-label="메뉴 닫기" />}
 
       <aside
@@ -133,6 +135,7 @@ export default function AdminHome({ onLogout, onSessionReset }: AdminHomeProps) 
           <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
             {navItems.map((item) => {
               const isActive = view === item.id
+              const Icon = item.Icon
               return (
                 <button
                   key={item.id}
@@ -141,7 +144,10 @@ export default function AdminHome({ onLogout, onSessionReset }: AdminHomeProps) 
                     isActive ? 'bg-[#4f46e5] text-white' : 'text-[#e5e7eb] hover:bg-[#374151]'
                   }`}
                 >
-                  <span className={`flex h-8 w-8 items-center justify-center rounded-md text-xs font-black ${isActive ? 'bg-white/15' : 'bg-[#374151]'}`}>{item.icon}</span>
+                  <span className={`flex h-8 w-8 items-center justify-center rounded-md text-xs font-black ${isActive ? 'bg-white/15' : 'bg-[#374151]'}`}><span className={`flex h-8 w-8 items-center justify-center rounded-md ${isActive ? 'bg-white/15' : 'bg-[#374151]'}`}>
+                    <Icon size={18} strokeWidth={2.2} />
+                  </span>
+                  </span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-sm font-medium">{item.label}</span>
                     <span className={`block text-xs ${isActive ? 'text-indigo-100' : 'text-[#9ca3af]'}`}>{item.description}</span>
@@ -179,7 +185,7 @@ export default function AdminHome({ onLogout, onSessionReset }: AdminHomeProps) 
           </div>
         </header>
 
-        <section className="p-4 lg:p-6">
+        <section className="p-4 pb-10 lg:p-6 lg:pb-10">
           {view === 'dashboard' && <DashboardView />}
           {view === 'system' && <SystemView startPatient={startPatient} startDoctor={startDoctor} />}
           {view === 'statistics' && <StatisticsView />}
@@ -285,15 +291,17 @@ function StatisticsView() {
         ))}
       </div>
       <Panel title="주간 트래픽">
-        {weeklyData.map(([day, visitors, duration]) => (
-          <div key={day} className="grid grid-cols-[32px_1fr] items-center gap-4">
-            <span className="text-sm font-medium text-[#e5e7eb]">{day}</span>
-            <div className="space-y-2">
-              <Bar width={`${(visitors / maxVisitors) * 100}%`} color="bg-[#4f46e5]" label={`${visitors.toLocaleString()}명`} />
-              <Bar width={`${(duration / maxDuration) * 100}%`} color="bg-[#10b981]" label={`${Math.floor(duration / 60)}분 ${duration % 60}초`} />
+        <div className="max-h-[320px] space-y-4 overflow-auto pr-2">
+          {weeklyData.map(([day, visitors, duration]) => (
+            <div key={day} className="grid min-w-[360px] grid-cols-[32px_1fr] items-center gap-4">
+              <span className="text-sm font-medium text-[#e5e7eb]">{day}</span>
+              <div className="space-y-2">
+                <Bar width={`${(visitors / maxVisitors) * 100}%`} color="bg-[#4f46e5]" label={`${visitors.toLocaleString()}명`} />
+                <Bar width={`${(duration / maxDuration) * 100}%`} color="bg-[#10b981]" label={`${Math.floor(duration / 60)}분 ${duration % 60}초`} />
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </Panel>
       <Panel title="진단내용 요약 이용률">
         {[

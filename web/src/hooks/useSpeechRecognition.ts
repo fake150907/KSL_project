@@ -1,14 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import type { ChatMessage } from '../types'
 
-// 💡 매직 넘버 상수화
 const FFT_SIZE = 256
 const SMOOTHING_TIME_CONSTANT = 0.72
 const BUCKET_COUNT = 48
 const VOICE_THRESHOLD_MIN = 0.12
 const MAX_VOLUME = 160
 
-// 💡 타입스크립트 안전장치 (Interface) 추가: any 타입 철거
 interface SpeechRecognitionEvent extends Event {
   results: { [index: number]: { [index: number]: { transcript: string } }, length: number };
 }
@@ -30,7 +28,10 @@ export function useSpeechRecognition(onMessage: (msg: ChatMessage) => void) {
   const audioStreamRef = useRef<MediaStream | null>(null)
   const audioAnimationRef = useRef<number | null>(null)
   
-  const isMounted = useRef(true) // 메모리 누수 방지
+  const isMounted = useRef(true)
+  
+  // 💡 고의적 종료 상태를 추적하는 마스터 스위치
+  const isIntentionalStop = useRef(false) 
 
   const [isActive, setIsActive] = useState(false)
   const [voiceLevels, setVoiceLevels] = useState<number[]>(Array(BUCKET_COUNT).fill(VOICE_THRESHOLD_MIN))
@@ -55,6 +56,7 @@ export function useSpeechRecognition(onMessage: (msg: ChatMessage) => void) {
     if (isMounted.current) setVoiceLevels(Array(BUCKET_COUNT).fill(VOICE_THRESHOLD_MIN))
   }, [])
 
+  // ... (startVisualizer 로직은 기존과 동일) ...
   const startVisualizer = useCallback(async () => {
     stopVisualizer()
     if (!navigator.mediaDevices?.getUserMedia) return
@@ -88,21 +90,23 @@ export function useSpeechRecognition(onMessage: (msg: ChatMessage) => void) {
 
   const start = useCallback(async () => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    if (!SR) {
-      alert('브라우저가 음성 인식을 지원하지 않습니다. Chrome 또는 Edge를 사용해 주세요.')
-      return
-    }
+    if (!SR) return alert('브라우저가 음성 인식을 지원하지 않습니다.')
+    
     try { await startVisualizer() } catch {}
     
+    // 시작 시 고의적 종료 스위치를 해제합니다.
+    isIntentionalStop.current = false
+
     const recognition = new SR() as SpeechRecognitionObj
     recognition.lang = 'ko-KR'
     recognition.continuous = true
     recognition.interimResults = false
+    
     recognition.onstart = () => { if(isMounted.current) setIsActive(true) }
+    
     recognition.onresult = (event) => {
       const transcript = event.results[event.results.length - 1][0].transcript.trim()
       if (!transcript) return
-      
       if(isMounted.current) {
         onMessage({
           id: `${Date.now()}-${Math.random()}`,
@@ -113,18 +117,26 @@ export function useSpeechRecognition(onMessage: (msg: ChatMessage) => void) {
         })
       }
     }
+    
     recognition.onerror = (e: any) => console.error('Speech error:', e.error)
+    
     recognition.onend = () => {
-      if(isMounted.current) setIsActive(false)
-      if (recognitionRef.current && isMounted.current) recognition.start()
+      if (isMounted.current) setIsActive(false)
+      // 💡 고의적 종료가 아닐 때(침묵으로 인한 자동 종료일 때)만 재시작합니다.
+      if (!isIntentionalStop.current && recognitionRef.current && isMounted.current) {
+        recognition.start()
+      }
     }
+    
     recognition.start()
     recognitionRef.current = recognition
   }, [startVisualizer, onMessage])
 
   const stop = useCallback(() => {
+    // 💡 강제로 끄는 시점에 마스터 스위치를 켭니다.
+    isIntentionalStop.current = true
+
     if (recognitionRef.current) {
-      recognitionRef.current.onend = null // 무한 재시작 루프 끊기
       recognitionRef.current.stop()
     }
     recognitionRef.current = null
