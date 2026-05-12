@@ -57,6 +57,7 @@ export default function PatientKiosk({
     isRunning, isDemoMode, activeDemoLabel, activeDemoClipLabel, currentPrediction,
     videoDevices, selectedDeviceId, setSelectedDeviceId,
     startCamera, stopCamera, startDemoScenario, handleDemoVideoEnded, getPredictionStatus,
+    camFps, sendFps,
   } = useSignLanguage(handleNewMessageFromKiosk)
 
   // 키오스크 역할 등록
@@ -437,7 +438,7 @@ export default function PatientKiosk({
         <div className="w-[480px] shrink-0 flex flex-col border-r border-slate-200 bg-white overflow-hidden">
           <div className="flex-1 min-h-0 p-3 bg-slate-50 flex justify-center items-center">
             <div className="w-full h-full rounded-2xl overflow-hidden shadow-inner border-4 border-white bg-black relative">
-              <VideoFeed videoRef={videoRef} canvasRef={canvasRef} landmarkCanvasRef={landmarkCanvasRef} isRunning={isRunning} currentPrediction={currentPrediction} predictionStatus={predictionStatus} onVideoEnded={handleDemoVideoEnded} />
+              <VideoFeed videoRef={videoRef} canvasRef={canvasRef} landmarkCanvasRef={landmarkCanvasRef} isRunning={isRunning} currentPrediction={currentPrediction} predictionStatus={predictionStatus} onVideoEnded={handleDemoVideoEnded} camFps={camFps} sendFps={sendFps} />
             </div>
           </div>
 

@@ -9,11 +9,14 @@ interface VideoFeedProps {
   currentPrediction: Prediction | null
   predictionStatus: string
   onVideoEnded?: () => void
+  camFps?: number
+  sendFps?: number
 }
 
 export default function VideoFeed({
   videoRef, canvasRef, landmarkCanvasRef,
-  isRunning, currentPrediction, predictionStatus, onVideoEnded
+  isRunning, currentPrediction, predictionStatus, onVideoEnded,
+  camFps, sendFps,
 }: VideoFeedProps) {
   
   const confidence = currentPrediction?.confidence 
@@ -48,6 +51,34 @@ export default function VideoFeed({
         style={{ transform: 'scaleX(-1)' }}
         className="pointer-events-none absolute inset-0 h-full w-full"
       />
+
+      {isRunning && camFps !== undefined && (
+        <div style={{
+          position: 'absolute', top: 12, left: 12,
+          background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(4px)',
+          borderRadius: 6, padding: '4px 10px',
+          fontFamily: 'var(--font-mono, monospace)',
+          fontSize: 13, fontWeight: 500, letterSpacing: '0.04em',
+          border: `0.5px solid ${camFps >= 24 ? 'rgba(0,255,136,0.25)' : camFps >= 15 ? 'rgba(255,204,0,0.25)' : 'rgba(255,80,80,0.25)'}`,
+          display: 'flex', alignItems: 'baseline', gap: 6,
+          pointerEvents: 'none',
+        }}>
+          <span style={{ color: camFps >= 24 ? '#00ff88' : camFps >= 15 ? '#ffcc00' : '#ff5050' }}>
+            {camFps}
+          </span>
+          <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>CAM</span>
+          {sendFps !== undefined && (
+            <>
+              <span style={{ color: 'rgba(255,255,255,0.2)', fontSize: 10 }}>|</span>
+              <span style={{ color: sendFps >= 12 ? '#00ff88' : sendFps >= 8 ? '#ffcc00' : '#ff5050' }}>
+                {sendFps}
+              </span>
+              <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>SEND</span>
+            </>
+          )}
+          <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', marginLeft: 2 }}>FPS</span>
+        </div>
+      )}
 
       {isRunning && (
         <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between rounded-lg border border-white/10 bg-slate-950/80 px-4 py-3 backdrop-blur">

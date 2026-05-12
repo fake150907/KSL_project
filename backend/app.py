@@ -730,7 +730,7 @@ def predict():
         image_pil = Image.open(io.BytesIO(frame_file.read())).convert("RGB")
         image_rgb = np.array(image_pil)
         height, width = image_rgb.shape[:2]
-        scale = min(640 / width, 480 / height, 1)
+        scale = min(320 / width, 180 / height, 1)
         if scale < 1:
             image_rgb = cv2.resize(
                 image_rgb,

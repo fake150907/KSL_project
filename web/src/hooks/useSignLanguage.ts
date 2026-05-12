@@ -66,7 +66,7 @@ export function useSignLanguage(
     confidenceThreshold = 0.30,
     windowSize = 32,
     stableMinCount = 1,
-    captureIntervalMs = 100,
+    captureIntervalMs = 60,
     maxMissingFrames = 3,
   } = config
 
@@ -98,6 +98,13 @@ export function useSignLanguage(
   const [isRunning, setIsRunning] = useState(false)
   const [isDemoMode, setIsDemoMode] = useState(false)
   const [activeDemoLabel, setActiveDemoLabel] = useState('')
+  const [camFps, setCamFps] = useState(0)
+  const [sendFps, setSendFps] = useState(0)
+  const camFrameCountRef = useRef(0)
+  const camFpsLastTimeRef = useRef(0)
+  const sendFrameCountRef = useRef(0)
+  const sendFpsLastTimeRef = useRef(0)
+  const camRafRef = useRef<number | null>(null)
   const [activeDemoClipLabel, setActiveDemoClipLabel] = useState('')
   const [currentPrediction, setCurrentPrediction] = useState<Prediction | null>(null)
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([])
@@ -562,6 +569,15 @@ export function useSignLanguage(
     if (isPredictingRef.current) return
     isPredictingRef.current = true
 
+    sendFrameCountRef.current++
+    const sendNow = performance.now()
+    const sendElapsed = sendNow - sendFpsLastTimeRef.current
+    if (sendElapsed >= 500) {
+      setSendFps(Math.round(sendFrameCountRef.current / (sendElapsed / 1000)))
+      sendFrameCountRef.current = 0
+      sendFpsLastTimeRef.current = sendNow
+    }
+
     if (!canvasCtxRef.current) {
       canvasCtxRef.current = canvasRef.current.getContext('2d')
     }
@@ -702,6 +718,33 @@ export function useSignLanguage(
     return () => clearInterval(interval)
   }, [isRunning, captureAndSend, captureIntervalMs])
 
+  useEffect(() => {
+    if (!isRunning) {
+      if (camRafRef.current) cancelAnimationFrame(camRafRef.current)
+      setCamFps(0)
+      setSendFps(0)
+      sendFrameCountRef.current = 0
+      return
+    }
+    camFrameCountRef.current = 0
+    camFpsLastTimeRef.current = performance.now()
+    sendFrameCountRef.current = 0
+    sendFpsLastTimeRef.current = performance.now()
+
+    const tick = (ts: number) => {
+      camFrameCountRef.current++
+      const elapsed = ts - camFpsLastTimeRef.current
+      if (elapsed >= 500) {
+        setCamFps(Math.round(camFrameCountRef.current / (elapsed / 1000)))
+        camFrameCountRef.current = 0
+        camFpsLastTimeRef.current = ts
+      }
+      camRafRef.current = requestAnimationFrame(tick)
+    }
+    camRafRef.current = requestAnimationFrame(tick)
+    return () => { if (camRafRef.current) cancelAnimationFrame(camRafRef.current) }
+  }, [isRunning])
+
   const getPredictionStatus = (prediction: Prediction): string => {
     if (prediction.window_filled) {
       if (!prediction.label) return '인식 불확실'
@@ -724,5 +767,6 @@ export function useSignLanguage(
     isRunning, isDemoMode, activeDemoLabel, activeDemoClipLabel, currentPrediction,
     videoDevices, selectedDeviceId, setSelectedDeviceId,
     startCamera, stopCamera, startDemoScenario, handleDemoVideoEnded, getPredictionStatus,
+    camFps, sendFps,
   }
 }
