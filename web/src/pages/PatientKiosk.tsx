@@ -97,8 +97,6 @@ export default function PatientKiosk({
 
       // ✅ 요약 생성 후 소켓으로 의사 쪽에 전달 (카카오 전송 여부와 무관)
       const saveSummary = async () => {
-        // buildChatText()는 string 반환 → 폴백용으로만 사용
-        // buildClinicalSummaryInput()은 list[str] 반환 → 백엔드 ai_client.py가 기대하는 형식
         let summaryText = buildChatText()
         try {
           const res = await fetch('/api/summary', {
@@ -107,12 +105,20 @@ export default function PatientKiosk({
             body: JSON.stringify({ conversation: buildClinicalSummaryInput() }),
           })
           const data = await res.json().catch(() => ({}))
-          if (res.ok && data.summary) summaryText = data.summary
-        } catch { /* 실패해도 원본 대화 텍스트 사용 */ }
+          
+          if (res.ok && data.summary) {
+             summaryText = data.summary
+          } else {
+             // API 응답이 정상이 아닐 경우 콘솔에 에러 출력
+             console.error("요약 API 호출 실패:", data.error || res.statusText)
+          }
+        } catch (error) { 
+          // 네트워크 오류 등 예외 발생 시 콘솔에 출력 후 폴백 텍스트 사용
+          console.error("요약 요청 중 네트워크 예외 발생:", error)
+        }
 
         setCachedSummary(summaryText)
 
-        // 의사 브라우저의 localStorage를 업데이트하도록 소켓 emit
         socket.emit('diagnosis_summary_saved', {
           patientName: actualPatientName,
           patientPhone: actualPatientPhone,
@@ -295,7 +301,7 @@ export default function PatientKiosk({
     setSendStatus('sending')
     setSendError('')
 
-    const summaryText = cachedSummary || buildChatText().join('\n')
+    const summaryText = cachedSummary || buildChatText()
 
     try {
       // 실제 카카오톡 발송
@@ -371,33 +377,35 @@ export default function PatientKiosk({
     localStorage.removeItem('KAKAO_ACCESS_TOKEN');
     localStorage.removeItem('KAKAO_REFRESH_TOKEN');
 
-    // "아니요" 선택 시에도 의사 화면에 대화 내역 저장
-    const summaryText = cachedSummary || buildChatText()
-    const sentAt = new Date().toISOString()
+    // 카카오 전송 완료 상태면 이미 kakao_sent로 저장됐으므로 덮어쓰지 않음
+    if (sendStatus !== 'sent') {
+      const summaryText = cachedSummary || buildChatText()
+      const sentAt = new Date().toISOString()
 
-    socket.emit('diagnosis_summary_saved', {
-      patientName: actualPatientName,
-      patientPhone: actualPatientPhone,
-      diagnosisSummary: summaryText,
-      isSent: false,
-      deliveryStatus: 'pending',
-      sentAt,
-    })
-
-    const savedRecords = JSON.parse(localStorage.getItem('medical_records') || '[]')
-    const normalizedPhone = actualPatientPhone.replace(/\D/g, '')
-    const recIdx = savedRecords.findIndex((r: { patientPhone?: string }) =>
-      (r.patientPhone || '').replace(/\D/g, '') === normalizedPhone
-    )
-    if (recIdx >= 0) {
-      savedRecords[recIdx] = {
-        ...savedRecords[recIdx],
+      socket.emit('diagnosis_summary_saved', {
+        patientName: actualPatientName,
+        patientPhone: actualPatientPhone,
         diagnosisSummary: summaryText,
         isSent: false,
         deliveryStatus: 'pending',
         sentAt,
+      })
+
+      const savedRecords = JSON.parse(localStorage.getItem('medical_records') || '[]')
+      const normalizedPhone = actualPatientPhone.replace(/\D/g, '')
+      const recIdx = savedRecords.findIndex((r: { patientPhone?: string }) =>
+        (r.patientPhone || '').replace(/\D/g, '') === normalizedPhone
+      )
+      if (recIdx >= 0) {
+        savedRecords[recIdx] = {
+          ...savedRecords[recIdx],
+          diagnosisSummary: summaryText,
+          isSent: false,
+          deliveryStatus: 'pending',
+          sentAt,
+        }
+        localStorage.setItem('medical_records', JSON.stringify(savedRecords))
       }
-      localStorage.setItem('medical_records', JSON.stringify(savedRecords))
     }
 
     setShowPopup(false)
