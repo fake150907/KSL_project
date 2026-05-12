@@ -1,0 +1,35 @@
+{
+  "manifest": "data\\shard_manifest_FILE07_FILE09.csv",
+  "npz": "outputs\\mediapipe_npz_FILE07_FILE09.npz",
+  "total_samples": 80,
+  "failed_samples": 0,
+  "sequence_length": 32,
+  "feature_dim": 225,
+  "shape": [
+    80,
+    32,
+    225
+  ],
+  "labels": [
+    "가다",
+    "감사",
+    "괜찮다",
+    "배고프다",
+    "병원",
+    "아프다",
+    "우유",
+    "자다"
+  ],
+  "label_counts": {
+    "가다": 20,
+    "감사": 5,
+    "괜찮다": 5,
+    "배고프다": 10,
+    "병원": 5,
+    "아프다": 5,
+    "우유": 10,
+    "자다": 20
+  },
+  "normalization": "shoulder-center + shoulder-width scale",
+  "layout": "pose33 + left_hand21 + right_hand21 = 75 landmarks x xyz = 225"
+}
