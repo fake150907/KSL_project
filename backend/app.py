@@ -1,0 +1,864 @@
+﻿from __future__ import annotations
+
+import io
+import json
+import os
+import sys
+import threading
+import time
+from collections import Counter, deque
+from pathlib import Path
+from typing import Any
+
+from flask import Flask, Response, jsonify, request, send_from_directory, session
+from flask_cors import CORS
+
+VISION_DISABLED = (
+    os.environ.get("DISABLE_VISION", "").lower() in {"1", "true", "yes"}
+)
+
+if VISION_DISABLED:
+    np = None
+    cv2 = None
+    mp = None
+    torch = None
+    Image = None
+else:
+    try:
+        import numpy as np
+    except ImportError:
+        np = None
+
+    try:
+        import cv2
+    except ImportError:
+        cv2 = None
+
+    try:
+        import mediapipe as mp
+    except ImportError:
+        mp = None
+
+    try:
+        import torch
+    except ImportError:
+        torch = None
+
+    try:
+        from PIL import Image
+    except ImportError:
+        Image = None
+
+os.environ.setdefault("MPLCONFIGDIR", str(Path(__file__).resolve().parents[1] / ".matplotlib"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from auth.routes import auth_bp, login_required
+from config import Config
+from notification.routes import notification_bp
+from src.services.gloss_to_text_service import gloss_to_text
+from src.utils.config import load_config
+from summary.routes import summary_bp
+
+if VISION_DISABLED:
+    mediapipe_landmarks_to_frame = None
+    sequence_to_tensor = None
+    build_sequence_model = None
+else:
+    try:
+        from src.data.keypoint_utils import mediapipe_landmarks_to_frame, sequence_to_tensor
+    except ImportError as exc:
+        print(f"Optional keypoint imports failed: {exc}")
+        mediapipe_landmarks_to_frame = None
+        sequence_to_tensor = None
+
+    try:
+        from src.models.model_sequence import build_sequence_model
+    except ImportError as exc:
+        print(f"Optional sequence model imports failed: {exc}")
+        build_sequence_model = None
+
+
+app = Flask(__name__)
+app.secret_key = Config.FLASK_SECRET_KEY
+CORS(app, supports_credentials=True)
+app.register_blueprint(auth_bp)
+app.register_blueprint(summary_bp)
+app.register_blueprint(notification_bp)
+
+memory_windows: dict[str, list[np.ndarray]] = {}
+memory_misses: dict[str, int] = {}
+memory_predictions: dict[str, deque] = {}
+session_configs: dict[str, dict] = {}
+gloss_to_text_last_called_at: dict[str, float] = {}
+GLOSS_TO_TEXT_MIN_INTERVAL_SECONDS = 6.0
+patient_session_lock = threading.Lock()
+patient_session: dict[str, Any] = {
+    "waiting": False,
+    "patientData": None,
+    "updatedAt": None,
+}
+chat_messages_lock = threading.Lock()
+chat_messages: list[dict[str, Any]] = []
+session_state_lock = threading.Lock()
+session_state: dict[str, Any] = {
+    "ended": False,
+    "updatedAt": None,
+}
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+CONFIG_PATH = os.environ.get("SIGN_CONFIG", str(ROOT_DIR / "config" / "web_demo.yaml"))
+
+try:
+    config = load_config(CONFIG_PATH)
+    print(f"Loaded config from {CONFIG_PATH}")
+except Exception as exc:
+    print(f"Config load failed from {CONFIG_PATH}: {exc}, using defaults")
+    config = {
+        "paths": {"checkpoints_dir": "src/models"},
+        "data": {"sequence_length": 32},
+        "preprocess": {"feature_dims": 3, "normalize": True},
+        "realtime": {
+            "confidence_threshold": 0.75,
+            "max_missing_frames": 3,
+            "min_segment_frames": 8,
+            "temperature": 0.7,
+            "tta_enabled": True,
+        },
+    }
+
+CHECKPOINT_DIR = ROOT_DIR / config.get("paths", {}).get("checkpoints_dir", "outputs/checkpoints")
+MODEL_FILES = {
+    "cnn_gru": CHECKPOINT_DIR / "best_cnngru_3000.pt",
+}
+
+sequence_models: dict[str, torch.nn.Module] = {}
+sequence_labels: dict[str, list[str]] = {}
+mp_holistic: Any = None
+mp_holistic_instance: Any = None
+mp_holistic_lock = threading.Lock()
+model_load_lock = threading.Lock()
+model_load_attempted = False
+mp_drawing: Any = None
+
+
+def softmax(x: np.ndarray) -> np.ndarray:
+    x = x - np.max(x)
+    exp = np.exp(x)
+    return exp / np.sum(exp)
+
+
+def load_label_map(path: Path) -> list[str]:
+    idx_to_label_path = ROOT_DIR / "model_results" / "idx_to_label_3000.json"
+    if idx_to_label_path.exists():
+        with idx_to_label_path.open("r", encoding="utf-8") as f:
+            idx_to_label = json.load(f)
+        labels: list[str] = []
+        for key, value in sorted(idx_to_label.items(), key=lambda item: int(item[0])):
+            if isinstance(value, dict):
+                labels.append(str(value.get("label") or value.get("word_id") or key))
+            else:
+                labels.append(str(value))
+        return labels
+
+    label_map_path = ROOT_DIR / "model_results" / "label_map_word_id_3000.json"
+    if not label_map_path.exists():
+        label_map_path = path.with_name("label_map.json")
+    if not label_map_path.exists():
+        label_map_path = ROOT_DIR / "model_results" / "label_map.json"
+    with label_map_path.open("r", encoding="utf-8") as f:
+        label_map = json.load(f)
+    return [label for label, _ in sorted(label_map.items(), key=lambda item: int(item[1]))]
+
+
+def load_sequence_checkpoint(path: Path) -> tuple[torch.nn.Module, list[str]]:
+    if torch is None or build_sequence_model is None:
+        raise RuntimeError("Vision model dependencies are not installed")
+    bundle = torch.load(path, map_location="cpu")
+    if isinstance(bundle, dict) and "model_state_dict" in bundle:
+        state_dict = bundle["model_state_dict"]
+        labels = load_label_map(path)
+        model_type = "cnn_gru_3000"
+        input_size = int(bundle.get("feature_dim", 225))
+        num_classes = int(bundle.get("num_classes", len(labels)))
+        train_config = {
+            "hidden_size": 128,
+            "num_layers": 2,
+            "dropout": 0.3,
+            "model_type": model_type,
+            "conv_channels": 64,
+        }
+    elif isinstance(bundle, dict) and "state_dict" in bundle:
+        state_dict = bundle["state_dict"]
+        labels = [str(x) for x in bundle["labels"]]
+        train_config = bundle.get("config", {}).get("train", {})
+        model_type = str(bundle.get("model_type", train_config.get("model_type", "rnn")))
+        input_size = int(bundle["input_size"])
+        num_classes = len(labels)
+    else:
+        state_dict = bundle
+        labels = load_label_map(path)
+        train_config = {"hidden_size": 64, "dropout": 0.5, "model_type": "cnn_1d", "conv_channels": 64}
+        model_type = "cnn_1d"
+        input_size = int(state_dict["cnn.0.weight"].shape[1])
+        num_classes = int(state_dict["classifier.3.weight"].shape[0])
+
+    model = build_sequence_model(
+        input_size=input_size,
+        num_classes=num_classes,
+        hidden_size=int(train_config.get("hidden_size", 64)),
+        num_layers=int(train_config.get("num_layers", 1)),
+        dropout=float(train_config.get("dropout", 0.1)),
+        rnn_type=str(train_config.get("rnn_type", "gru")),
+        model_type=model_type,
+        conv_channels=int(train_config.get("conv_channels", 128)),
+        num_heads=int(train_config.get("num_heads", 4)),
+        sequence_length=int(
+            bundle.get("config", {}).get("data", {}).get("sequence_length", config["data"]["sequence_length"])
+            if isinstance(bundle, dict)
+            else config["data"]["sequence_length"]
+        ),
+    )
+    model.load_state_dict(state_dict)
+    model.eval()
+    return model, labels
+
+
+def load_models() -> None:
+    global sequence_models, sequence_labels, mp_holistic, mp_holistic_instance, mp_drawing
+
+    if mp is None:
+        print("MediaPipe is not installed; /api/predict will return 503")
+        return
+
+    try:
+        mp_holistic = mp.solutions.holistic.Holistic
+        mp_holistic_instance = mp_holistic(
+            model_complexity=0,
+            smooth_landmarks=False,
+            min_detection_confidence=0.2,
+            min_tracking_confidence=0.2,
+        )
+        mp_drawing = mp.solutions.drawing_utils
+        print("Loaded MediaPipe")
+    except Exception as exc:
+        print(f"Failed to load MediaPipe: {exc}")
+
+    if torch is None or build_sequence_model is None:
+        print("Sequence model dependencies are not installed; /api/predict will return landmarks only")
+        return
+
+    for model_key, path in MODEL_FILES.items():
+        try:
+            if path.exists():
+                model, labels = load_sequence_checkpoint(path)
+                sequence_models[model_key] = model
+                sequence_labels[model_key] = labels
+                print(f"Loaded {model_key} model from {path}")
+        except Exception as exc:
+            print(f"Failed to load {model_key} model from {path}: {exc}")
+
+
+def ensure_models_loaded() -> None:
+    global model_load_attempted
+    if model_load_attempted:
+        return
+    with model_load_lock:
+        if model_load_attempted:
+            return
+        load_models()
+        model_load_attempted = True
+
+
+def get_session_window(client_id: str) -> list[np.ndarray]:
+    if client_id not in memory_windows:
+        memory_windows[client_id] = []
+    return memory_windows[client_id]
+
+
+def get_session_misses(client_id: str) -> int:
+    return int(memory_misses.get(client_id, 0))
+
+
+def set_session_misses(client_id: str, misses: int) -> None:
+    memory_misses[client_id] = max(0, misses)
+
+
+def get_session_config(client_id: str) -> dict:
+    return session_configs.get(client_id, {})
+
+
+def resolve_session_param(client_id: str, key: str, default: Any) -> Any:
+    cfg = get_session_config(client_id)
+    if key in cfg:
+        return cfg[key]
+    return config.get("realtime", {}).get(key, default)
+
+
+def get_prediction_history(client_id: str) -> deque:
+    if client_id not in memory_predictions:
+        memory_predictions[client_id] = deque(maxlen=5)
+    return memory_predictions[client_id]
+
+
+def summarize_prediction_history(history: deque, min_count: int = 1) -> tuple[str | None, float]:
+    if not history:
+        return None, 0.0
+    counts = Counter(item["label"] for item in history)
+    label, count = counts.most_common(1)[0]
+    if count < min_count:
+        latest = history[-1]
+        return latest["label"], float(latest["confidence"])
+    confidences = [float(item["confidence"]) for item in history if item["label"] == label]
+    return label, float(np.mean(confidences)) if confidences else 0.0
+
+
+def normalize_model_type(model_type: str) -> str:
+    aliases = {
+        "sequence": "cnn_gru",
+        "cnn-gru": "cnn_gru",
+        "cnn+gru": "cnn_gru",
+        "cnn_gru": "cnn_gru",
+        "cnn_1d": "cnn_1d",
+        "cnn-1d": "cnn_1d",
+        "1d-cnn": "cnn_1d",
+        "lstm": "lstm",
+    }
+    return aliases.get(model_type.lower(), "cnn_gru")
+
+
+def get_sequence_model_bundle(model_type: str) -> tuple[Any, list[str] | None]:
+    selected = normalize_model_type(model_type)
+    if selected not in sequence_models:
+        selected = "cnn_gru"
+    model = sequence_models.get(selected)
+    labels = sequence_labels.get(selected)
+    return model, labels
+
+
+def top_predictions_from_probs(
+    probs: np.ndarray,
+    labels: list[str],
+    top_k: int = 3,
+) -> tuple[str | None, float, list[dict[str, float | str]]]:
+    if probs.size == 0 or not labels:
+        return None, 0.0, []
+    pred = int(np.argmax(probs))
+    top_idx = np.argsort(probs)[::-1][:top_k]
+    top = [{"label": labels[i], "confidence": float(probs[i])} for i in top_idx]
+    return labels[pred], float(probs[pred]), top
+
+
+def predict_live(
+    model_type: str,
+    tensor: np.ndarray,
+    temperature: float = 0.7,
+) -> tuple[str | None, float, list[dict[str, float | str]]]:
+    model, labels = get_sequence_model_bundle(model_type)
+    if not model or not labels:
+        return None, 0.0, []
+    with torch.no_grad():
+        logits = model(torch.tensor(tensor[None, ...], dtype=torch.float32))[0].numpy()
+    probs = softmax(logits / max(temperature, 1e-6))
+    return top_predictions_from_probs(probs, labels)
+
+
+def align_tensor_features(tensor: np.ndarray, expected: int) -> np.ndarray:
+    if expected <= 0 or tensor.shape[1] == expected:
+        return tensor
+    if tensor.shape[1] > expected:
+        return tensor[:, :expected]
+    aligned = np.zeros((tensor.shape[0], expected), dtype=tensor.dtype)
+    aligned[:, : tensor.shape[1]] = tensor
+    return aligned
+
+
+def smooth_segment_frames(frames: list[np.ndarray]) -> list[np.ndarray]:
+    if len(frames) < 3:
+        return frames
+    smoothed: list[np.ndarray] = []
+    for idx, frame in enumerate(frames):
+        if idx == 0 or idx == len(frames) - 1:
+            smoothed.append(frame)
+            continue
+        prev_frame = frames[idx - 1]
+        next_frame = frames[idx + 1]
+        smoothed.append((prev_frame * 0.2 + frame * 0.6 + next_frame * 0.2).astype(np.float32))
+    return smoothed
+
+
+def center_trim_segment_frames(frames: list[np.ndarray], trim_ratio: float = 0.1) -> list[np.ndarray]:
+    if len(frames) < 12:
+        return frames
+    trim = max(1, int(round(len(frames) * trim_ratio)))
+    if len(frames) - trim * 2 < 8:
+        return frames
+    return frames[trim:-trim]
+
+
+def build_segment_tta_variants(frames: list[np.ndarray]) -> list[list[np.ndarray]]:
+    variants = [frames, smooth_segment_frames(frames)]
+    trimmed = center_trim_segment_frames(frames)
+    if len(trimmed) != len(frames):
+        variants.append(trimmed)
+        variants.append(smooth_segment_frames(trimmed))
+    return variants
+
+
+def frames_to_model_tensor(model_type: str, frames: list[np.ndarray]) -> np.ndarray:
+    sequence_length = int(config["data"]["sequence_length"])
+    tensor = sequence_to_tensor(frames, sequence_length)
+    selected_model = sequence_models.get(model_type) or sequence_models.get("cnn_gru")
+    if selected_model is not None:
+        expected_features = int(selected_model.input_size)
+        tensor = align_tensor_features(tensor, expected_features)
+    return tensor
+
+
+def predict_sequence_frames(
+    model_type: str,
+    frames: list[np.ndarray],
+    temperature: float = 0.7,
+    use_tta: bool = True,
+) -> tuple[str | None, float, list[dict[str, float | str]], int]:
+    model, labels = get_sequence_model_bundle(model_type)
+    if not model or not labels:
+        return None, 0.0, [], 0
+
+    temp = max(temperature, 1e-6)
+    tta_enabled = use_tta
+    variants = build_segment_tta_variants(frames) if tta_enabled else [smooth_segment_frames(frames)]
+    probs_list: list[np.ndarray] = []
+
+    with torch.no_grad():
+        for variant in variants:
+            tensor = frames_to_model_tensor(model_type, variant)
+            logits = model(torch.tensor(tensor[None, ...], dtype=torch.float32))[0].numpy()
+            probs_list.append(softmax(logits / temp))
+
+    if not probs_list:
+        return None, 0.0, [], 0
+    avg_probs = np.mean(np.stack(probs_list, axis=0), axis=0)
+    label, conf, top = top_predictions_from_probs(avg_probs, labels)
+    return label, conf, top, len(probs_list)
+
+
+def generate_mjpeg_frames(camera_index: int = 0):
+    if cv2 is None or np is None:
+        yield b"--frame\r\nContent-Type: text/plain\r\n\r\nCamera dependencies are not installed\r\n"
+        return
+
+    cap = cv2.VideoCapture(camera_index)
+    if not cap.isOpened():
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.putText(
+            frame,
+            "Camera not available",
+            (130, 240),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.0,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        ok, buffer = cv2.imencode(".jpg", frame)
+        if ok:
+            yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
+        return
+
+    try:
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            ok, buffer = cv2.imencode(".jpg", frame)
+            if not ok:
+                continue
+            yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
+    finally:
+        cap.release()
+
+
+@app.route("/api/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/api/patient-session", methods=["GET", "POST", "DELETE"])
+def api_patient_session():
+    if request.method == "GET":
+        with patient_session_lock:
+            return jsonify(dict(patient_session)), 200
+
+    if request.method == "DELETE":
+        with patient_session_lock:
+            patient_session.update({"waiting": False, "patientData": None, "updatedAt": None})
+            return jsonify(dict(patient_session)), 200
+
+    data = request.get_json(silent=True) or {}
+    patient_data = data.get("patientData") or data.get("patient_data") or data
+    if not isinstance(patient_data, dict):
+        return jsonify({"error": "patientData must be an object"}), 400
+
+    normalized = {
+        "name": str(patient_data.get("name", "")).strip(),
+        "dob": str(patient_data.get("dob", "")).strip(),
+        "gender": str(patient_data.get("gender", "")).strip(),
+        "phone": str(patient_data.get("phone", "")).strip(),
+    }
+    if not normalized["name"] or not normalized["phone"]:
+        return jsonify({"error": "patient name and phone are required"}), 400
+
+    with patient_session_lock:
+        patient_session.update(
+            {
+                "waiting": True,
+                "patientData": normalized,
+                "updatedAt": int(time.time()),
+            }
+        )
+        return jsonify(dict(patient_session)), 200
+
+
+@app.route("/api/messages", methods=["GET", "POST", "DELETE"])
+def api_messages():
+    if request.method == "GET":
+        with chat_messages_lock:
+            return jsonify({"messages": list(chat_messages)}), 200
+
+    if request.method == "DELETE":
+        with chat_messages_lock:
+            chat_messages.clear()
+        return jsonify({"messages": []}), 200
+
+    data = request.get_json(silent=True) or {}
+    message_id = str(data.get("id", "")).strip()
+    sender = str(data.get("sender", "")).strip()
+    text = str(data.get("text", "")).strip()
+    if not message_id or sender not in {"patient", "doctor"} or not text:
+        return jsonify({"error": "id, sender, and text are required"}), 400
+
+    message = {
+        "id": message_id,
+        "sender": sender,
+        "text": text,
+        "timestamp": str(data.get("timestamp") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())),
+        "label": str(data.get("label", "")).strip(),
+    }
+    with chat_messages_lock:
+        if not any(item.get("id") == message_id for item in chat_messages):
+            chat_messages.append(message)
+            del chat_messages[:-200]
+    return jsonify({"message": message}), 200
+
+
+@app.route("/api/session-state", methods=["GET", "POST", "DELETE"])
+def api_session_state():
+    if request.method == "GET":
+        with session_state_lock:
+            return jsonify(dict(session_state)), 200
+
+    with session_state_lock:
+        if request.method == "DELETE":
+            session_state.update({"ended": False, "updatedAt": None})
+        else:
+            data = request.get_json(silent=True) or {}
+            session_state.update({"ended": bool(data.get("ended")), "updatedAt": int(time.time())})
+        return jsonify(dict(session_state)), 200
+
+
+@app.route("/", methods=["GET"])
+def root():
+    return jsonify({"status": "ok", "service": "ksl-backend"}), 200
+
+
+@app.route("/api/gloss_to_text", methods=["POST"])
+def api_gloss_to_text():
+    data = request.get_json(force=True, silent=True) or {}
+    client_id = str(data.get("client_id") or request.remote_addr or "default")
+    now = time.monotonic()
+    last_called_at = gloss_to_text_last_called_at.get(client_id, 0.0)
+    elapsed = now - last_called_at
+    if elapsed < GLOSS_TO_TEXT_MIN_INTERVAL_SECONDS:
+        retry_after = round(GLOSS_TO_TEXT_MIN_INTERVAL_SECONDS - elapsed, 2)
+        return (
+            jsonify(
+                {
+                    "error": "gloss_to_text API는 6초에 한 번만 호출할 수 있습니다.",
+                    "retry_after": retry_after,
+                }
+            ),
+            429,
+        )
+    gloss_to_text_last_called_at[client_id] = now
+
+    gloss_value = data.get("gloss", "")
+    if isinstance(gloss_value, list):
+        gloss = " + ".join(str(item).strip() for item in gloss_value if str(item).strip())
+    else:
+        gloss = str(gloss_value).strip()
+    if not gloss:
+        return jsonify({"error": "gloss field is required"}), 400
+
+    provider = data.get("provider")
+    model = data.get("model")
+    result = gloss_to_text(
+        gloss,
+        provider=str(provider).strip() if provider else None,
+        model=str(model).strip() if model else None,
+    )
+    return jsonify({"gloss": gloss, "text": result}), 200
+
+
+@app.route("/api/kakao/login", methods=["GET"])
+def kakao_login():
+    from urllib.parse import urlencode
+    from flask import redirect as flask_redirect
+
+    redirect_uri = request.args.get("redirect_uri", "")
+    if not Config.KAKAO_REST_API_KEY:
+        return jsonify({"error": "KAKAO_REST_API_KEY가 설정되어 있지 않습니다."}), 500
+    if not redirect_uri:
+        return jsonify({"error": "redirect_uri가 필요합니다."}), 400
+
+    params = urlencode({"client_id": Config.KAKAO_REST_API_KEY, "redirect_uri": redirect_uri, "response_type": "code"})
+    return flask_redirect(f"https://kauth.kakao.com/oauth/authorize?{params}")
+
+
+@app.route("/api/kakao/token", methods=["POST"])
+def kakao_token():
+    data = request.get_json(silent=True) or {}
+    code = str(data.get("code", "")).strip()
+    redirect_uri = str(data.get("redirect_uri", "")).strip()
+
+    if not Config.KAKAO_REST_API_KEY:
+        return jsonify({"error": "KAKAO_REST_API_KEY가 설정되어 있지 않습니다."}), 500
+    if not code:
+        return jsonify({"error": "카카오 인가 코드(code)가 필요합니다."}), 400
+    if not redirect_uri:
+        return jsonify({"error": "redirect_uri가 필요합니다."}), 400
+
+    try:
+        import requests
+
+        token_payload = {
+            "grant_type": "authorization_code",
+            "client_id": Config.KAKAO_REST_API_KEY,
+            "redirect_uri": redirect_uri,
+            "code": code,
+        }
+        if Config.KAKAO_CLIENT_SECRET:
+            token_payload["client_secret"] = Config.KAKAO_CLIENT_SECRET
+
+        response = requests.post(
+            "https://kauth.kakao.com/oauth/token",
+            headers={"Content-Type": "application/x-www-form-urlencoded;charset=utf-8"},
+            data=token_payload,
+            timeout=10,
+        )
+        result = response.json()
+        if response.status_code != 200:
+            error_msg = result.get("error_description") or result.get("msg") or result.get("error") or str(result)
+            return jsonify({"error": str(error_msg)}), response.status_code
+        return jsonify(
+            {
+                "access_token": result.get("access_token"),
+                "refresh_token": result.get("refresh_token"),
+                "expires_in": result.get("expires_in"),
+            }
+        ), 200
+    except Exception as exc:
+        return jsonify({"error": f"카카오 토큰 발급 실패: {exc}"}), 502
+
+
+@app.route("/validation_demos/<path:filename>", methods=["GET"])
+def validation_demo_video(filename: str):
+    return send_from_directory(ROOT_DIR / "data" / "raw" / "validation_mp4", filename)
+
+
+@app.route("/video_feed", methods=["GET"])
+@login_required
+def video_feed():
+    camera_index = int(request.args.get("camera", 0))
+    return Response(
+        generate_mjpeg_frames(camera_index),
+        mimetype="multipart/x-mixed-replace; boundary=frame",
+    )
+
+
+@app.route("/api/session-config", methods=["POST"])
+def set_session_config():
+    data = request.get_json() or {}
+    client_id = data.get("client_id", "default")
+    realtime_cfg = config.get("realtime", {})
+    sequence_length = int(config["data"]["sequence_length"])
+
+    requested_window_size = int(data.get("window_size", realtime_cfg.get("window_size", sequence_length)))
+    tta_raw = data.get("tta_enabled", realtime_cfg.get("tta_enabled", True))
+
+    session_configs[client_id] = {
+        "model_type": normalize_model_type(data.get("model_type", "cnn_gru")),
+        "confidence_threshold": float(data.get("confidence_threshold", realtime_cfg.get("confidence_threshold", 0.75))),
+        "window_size": max(8, min(requested_window_size, sequence_length)),
+        "max_missing_frames": int(data.get("max_missing_frames", realtime_cfg.get("max_missing_frames", 3))),
+        "min_segment_frames": int(data.get("min_segment_frames", realtime_cfg.get("min_segment_frames", 8))),
+        "temperature": float(data.get("temperature", realtime_cfg.get("temperature", 0.7))),
+        "tta_enabled": str(tta_raw).lower() not in {"false", "0", "no"},
+    }
+    return jsonify({"status": "ok", "client_id": client_id}), 200
+
+
+@app.route("/api/predict", methods=["POST"])
+def predict():
+    session.modified = False
+    request_started_at = time.perf_counter()
+    try:
+        ensure_models_loaded()
+        if cv2 is None or Image is None or np is None or mp is None:
+            return jsonify({"error": "Vision dependencies are not installed"}), 503
+        if mp_holistic_instance is None:
+            return jsonify({"error": "MediaPipe is not available"}), 503
+        if "frame" not in request.files:
+            return jsonify({"error": "No frame provided"}), 400
+
+        client_id = request.form.get("client_id", "default")
+        frame_id = request.form.get("frame_id", "")
+
+        sequence_length = int(config["data"]["sequence_length"])
+        model_type: str = resolve_session_param(client_id, "model_type", "cnn_gru")
+        confidence_threshold: float = resolve_session_param(client_id, "confidence_threshold", 0.75)
+        window_size: int = resolve_session_param(client_id, "window_size", sequence_length)
+        max_missing_frames: int = resolve_session_param(client_id, "max_missing_frames", 3)
+        min_segment_frames: int = resolve_session_param(client_id, "min_segment_frames", 8)
+        temperature: float = resolve_session_param(client_id, "temperature", 0.7)
+        use_tta: bool = resolve_session_param(client_id, "tta_enabled", True)
+
+        frame_file = request.files["frame"]
+        image_pil = Image.open(io.BytesIO(frame_file.read())).convert("RGB")
+        image_rgb = np.array(image_pil)
+        height, width = image_rgb.shape[:2]
+
+        with mp_holistic_lock:
+            results = mp_holistic_instance.process(image_rgb)
+
+        has_hand = bool(results.left_hand_landmarks or results.right_hand_landmarks)
+        has_pose = bool(results.pose_landmarks)
+        landmarks = {"left_hand": [], "right_hand": [], "pose": []}
+
+        if results.left_hand_landmarks:
+            landmarks["left_hand"] = [[lm.x, lm.y, lm.z] for lm in results.left_hand_landmarks.landmark]
+        if results.right_hand_landmarks:
+            landmarks["right_hand"] = [[lm.x, lm.y, lm.z] for lm in results.right_hand_landmarks.landmark]
+        if results.pose_landmarks:
+            landmarks["pose"] = [[lm.x, lm.y, lm.z] for lm in results.pose_landmarks.landmark]
+
+        window = get_session_window(client_id)
+        prediction: dict[str, Any] = {
+            "label": None,
+            "confidence": 0.0,
+            "has_hand": has_hand,
+            "has_pose": has_pose,
+            "landmarks": landmarks,
+            "window_progress": len(window),
+            "window_size": window_size,
+            "missing_frames": get_session_misses(client_id),
+            "max_missing_frames": max_missing_frames,
+            "min_segment_frames": min_segment_frames,
+            "segment_frames": None,
+            "top_predictions": [],
+            "frame_id": frame_id,
+            "input_size": {"width": int(width), "height": int(height)},
+        }
+
+        can_collect_sequence = mediapipe_landmarks_to_frame is not None
+
+        if has_hand and can_collect_sequence:
+            set_session_misses(client_id, 0)
+            prediction["missing_frames"] = 0
+            frame_points = mediapipe_landmarks_to_frame(results)
+            window.append(frame_points)
+            prediction["window_progress"] = len(window)
+            prediction["window_size"] = window_size
+            prediction["window_filled"] = False
+            prediction["segmenting"] = True
+            prediction["status"] = "수어 단어 구간 수집 중"
+        elif has_hand:
+            set_session_misses(client_id, 0)
+            prediction["missing_frames"] = 0
+            prediction["window_progress"] = len(window)
+            prediction["window_filled"] = False
+            prediction["segmenting"] = True
+            prediction["status"] = "MediaPipe 랜드마크 감지 중"
+        else:
+            misses = get_session_misses(client_id) + 1
+            set_session_misses(client_id, misses)
+            prediction["missing_frames"] = misses
+            if misses > max_missing_frames:
+                segment_frames = list(window)
+                window.clear()
+                memory_predictions.pop(client_id, None)
+                prediction["window_progress"] = 0
+                prediction["segmenting"] = False
+
+                if len(segment_frames) >= min_segment_frames:
+                    label, conf, top_predictions, tta_count = predict_sequence_frames(
+                        model_type,
+                        segment_frames,
+                        temperature=temperature,
+                        use_tta=use_tta,
+                    )
+                    prediction["top_predictions"] = top_predictions
+                    prediction["raw_label"] = label
+                    prediction["raw_confidence"] = conf
+                    prediction["tta_count"] = tta_count
+                    prediction["confidence"] = conf
+                    prediction["window_filled"] = True
+                    prediction["segment_finalized"] = True
+                    prediction["segment_frames"] = len(segment_frames)
+
+                    if label and conf >= confidence_threshold:
+                        prediction["label"] = label
+                        prediction["below_threshold"] = False
+                    else:
+                        prediction["label"] = None
+                        prediction["below_threshold"] = True
+                        prediction["status"] = "수어 구간은 잡혔지만 신뢰도가 낮습니다."
+                elif segment_frames:
+                    prediction["segment_finalized"] = True
+                    prediction["segment_frames"] = len(segment_frames)
+                    prediction["status"] = "수어 구간이 너무 짧아 예측하지 않았습니다."
+            else:
+                prediction["window_progress"] = len(window)
+
+        process_ms = (time.perf_counter() - request_started_at) * 1000
+        prediction["process_ms"] = round(process_ms, 1)
+
+        if prediction.get("segment_finalized"):
+            top_log = json.dumps(prediction.get("top_predictions", []), ensure_ascii=False)
+            print(
+                f"[segment] frame={frame_id} ms={process_ms:.1f} "
+                f"frames={prediction.get('segment_frames')} "
+                f"label={prediction.get('label')} conf={prediction.get('confidence'):.2f} "
+                f"raw={prediction.get('raw_label')}/{prediction.get('raw_confidence')} "
+                f"tta={prediction.get('tta_count')} top={top_log}",
+                flush=True,
+            )
+        else:
+            print(
+                f"[frame] id={frame_id} ms={process_ms:.1f} "
+                f"hand={has_hand} window={len(window)}/{window_size} "
+                f"miss={prediction.get('missing_frames')}/{max_missing_frames}"
+            )
+
+        return jsonify({"frame_id": frame_id, "prediction": prediction}), 200
+    except Exception as exc:
+        print(f"Prediction error: {exc}")
+        import traceback
+
+        traceback.print_exc()
+        return jsonify({"error": str(exc)}), 500
+
+
+if __name__ == "__main__":
+    load_models()
+    port = int(os.environ.get("PORT", 5000))
+    app.run(debug=False, host="0.0.0.0", port=port, use_reloader=False, threaded=True)

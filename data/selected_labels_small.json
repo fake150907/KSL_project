@@ -1,0 +1,14 @@
+{
+  "labels": [
+    "가다",
+    "감사",
+    "괜찮다",
+    "배고프다",
+    "병원",
+    "아프다",
+    "우유",
+    "자다"
+  ],
+  "mode": "mediapipe_retrain_8labels",
+  "note": "Fixed target labels for MediaPipe retraining. Do not add labels outside this list for this run."
+}

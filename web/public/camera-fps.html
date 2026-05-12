@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Actual Webcam FPS Viewer</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        background: #101114;
+        color: #f6f7f9;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 30%),
+          #101114;
+      }
+
+      main {
+        width: min(1100px, 100%);
+      }
+
+      h1 {
+        margin: 0 0 14px;
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 0;
+      }
+
+      .viewer {
+        position: relative;
+        width: 100%;
+        overflow: hidden;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 10px;
+        background: #000;
+        aspect-ratio: 16 / 9;
+        max-height: 620px;
+      }
+
+      video {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .badge-row {
+        position: absolute;
+        inset: 12px 12px auto 12px;
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        pointer-events: none;
+      }
+
+      .cluster {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .badge {
+        min-width: 112px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 8px;
+        background: rgba(0, 0, 0, 0.58);
+        padding: 8px 10px;
+        backdrop-filter: blur(6px);
+      }
+
+      .label {
+        display: block;
+        margin-bottom: 2px;
+        color: rgba(255, 255, 255, 0.62);
+        font-size: 11px;
+      }
+
+      .value {
+        font-family: "Cascadia Mono", Consolas, monospace;
+        font-size: 22px;
+        font-weight: 700;
+        color: #00ff88;
+      }
+
+      .unit {
+        margin-left: 3px;
+        color: rgba(0, 255, 136, 0.68);
+        font-size: 12px;
+      }
+
+      .gate {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        padding: 24px;
+        background: rgba(0, 0, 0, 0.82);
+        text-align: center;
+      }
+
+      .gate p {
+        margin: 0;
+        color: rgba(255, 255, 255, 0.68);
+        font-size: 14px;
+      }
+
+      button,
+      select {
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.08);
+        color: #fff;
+        font: inherit;
+      }
+
+      button {
+        cursor: pointer;
+        padding: 9px 16px;
+      }
+
+      button.primary {
+        border-color: rgba(0, 255, 136, 0.42);
+        background: rgba(0, 255, 136, 0.14);
+        color: #00ff88;
+        font-weight: 700;
+      }
+
+      select {
+        min-width: 160px;
+        padding: 8px 10px;
+      }
+
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 12px;
+        flex-wrap: wrap;
+      }
+
+      .graph {
+        display: flex;
+        align-items: flex-end;
+        gap: 2px;
+        height: 34px;
+        flex: 1;
+        min-width: 220px;
+        border-left: 1px solid rgba(255, 255, 255, 0.08);
+        padding-left: 10px;
+      }
+
+      .bar {
+        width: 7px;
+        min-height: 2px;
+        border-radius: 2px 2px 0 0;
+        transition: height 140ms linear;
+      }
+
+      .meta {
+        margin-top: 10px;
+        color: rgba(255, 255, 255, 0.62);
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
+      .error {
+        display: none;
+        color: #ff7272;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>실제 웹캠 FPS 뷰어</h1>
+
+      <section class="viewer" aria-label="웹캠 실제 FPS 뷰어">
+        <video id="webcam" autoplay playsinline muted></video>
+
+        <div class="badge-row">
+          <div class="cluster">
+            <div class="badge">
+              <span class="label">Camera frames</span>
+              <span id="camera-fps" class="value">--</span><span class="unit">FPS</span>
+            </div>
+            <div class="badge">
+              <span class="label">Render loop</span>
+              <span id="render-fps" class="value">--</span><span class="unit">FPS</span>
+            </div>
+          </div>
+          <div class="badge">
+            <span class="label">Resolution</span>
+            <span id="resolution" class="value">--</span>
+          </div>
+        </div>
+
+        <div id="start-screen" class="gate">
+          <p>실제 카메라 프레임 도착 FPS를 측정합니다.</p>
+          <button id="start-btn" class="primary" type="button">웹캠 시작</button>
+          <p id="error" class="error"></p>
+        </div>
+      </section>
+
+      <div class="controls">
+        <select id="camera-select" aria-label="카메라 선택">
+          <option value="">카메라 자동 선택</option>
+        </select>
+        <select id="quality">
+          <option value="720-60">1280 x 720, 60fps 요청</option>
+          <option value="720-30">1280 x 720, 30fps 요청</option>
+          <option value="1080-60">1920 x 1080, 60fps 요청</option>
+          <option value="480-60">640 x 480, 60fps 요청</option>
+        </select>
+        <button id="stop-btn" type="button" hidden>중지</button>
+        <div id="graph" class="graph" aria-label="실제 카메라 FPS 히스토리"></div>
+      </div>
+
+      <p id="settings" class="meta">카메라 설정: --</p>
+    </main>
+
+    <script>
+      const video = document.getElementById("webcam");
+      const startScreen = document.getElementById("start-screen");
+      const startBtn = document.getElementById("start-btn");
+      const stopBtn = document.getElementById("stop-btn");
+      const cameraSelect = document.getElementById("camera-select");
+      const quality = document.getElementById("quality");
+      const error = document.getElementById("error");
+      const cameraFpsEl = document.getElementById("camera-fps");
+      const renderFpsEl = document.getElementById("render-fps");
+      const resolutionEl = document.getElementById("resolution");
+      const settingsEl = document.getElementById("settings");
+      const graphEl = document.getElementById("graph");
+
+      let stream = null;
+      let renderAnimId = null;
+      let cameraCallbackActive = false;
+      let cameraFrames = 0;
+      let cameraLastTime = 0;
+      let renderFrames = 0;
+      let renderLastTime = 0;
+      const fpsHistory = [];
+      const maxHistory = 45;
+
+      const profiles = {
+        "720-60": { width: 1280, height: 720, frameRate: 60 },
+        "720-30": { width: 1280, height: 720, frameRate: 30 },
+        "1080-60": { width: 1920, height: 1080, frameRate: 60 },
+        "480-60": { width: 640, height: 480, frameRate: 60 },
+      };
+
+      async function refreshCameraList(preferredDeviceId = cameraSelect.value) {
+        if (!navigator.mediaDevices?.enumerateDevices) return;
+
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cameras = devices.filter((device) => device.kind === "videoinput");
+        const currentValue = preferredDeviceId;
+
+        cameraSelect.textContent = "";
+        const autoOption = document.createElement("option");
+        autoOption.value = "";
+        autoOption.textContent = "카메라 자동 선택";
+        cameraSelect.appendChild(autoOption);
+
+        cameras.forEach((camera, index) => {
+          const option = document.createElement("option");
+          option.value = camera.deviceId;
+          option.textContent = camera.label || `카메라 ${index + 1}`;
+          cameraSelect.appendChild(option);
+        });
+
+        if ([...cameraSelect.options].some((option) => option.value === currentValue)) {
+          cameraSelect.value = currentValue;
+        }
+      }
+
+      function colorForFps(value) {
+        if (value >= 50) return "#00ff88";
+        if (value >= 24) return "#8dff5a";
+        if (value >= 15) return "#ffcc00";
+        return "#ff5050";
+      }
+
+      function setFps(el, value) {
+        el.textContent = String(value);
+        el.style.color = colorForFps(value);
+      }
+
+      function renderGraph() {
+        graphEl.textContent = "";
+        const max = Math.max(60, ...fpsHistory);
+        fpsHistory.forEach((value, index) => {
+          const bar = document.createElement("div");
+          bar.className = "bar";
+          bar.style.height = `${Math.max(2, Math.round((value / max) * 34))}px`;
+          bar.style.background = colorForFps(value);
+          bar.style.opacity = String(0.35 + (0.65 * (index + 1)) / fpsHistory.length);
+          graphEl.appendChild(bar);
+        });
+      }
+
+      function showTrackSettings() {
+        const track = stream?.getVideoTracks()[0];
+        const settings = track?.getSettings?.() ?? {};
+        resolutionEl.textContent =
+          settings.width && settings.height ? `${settings.width}x${settings.height}` : "--";
+        settingsEl.textContent = `카메라 설정: ${JSON.stringify(settings)}`;
+      }
+
+      function startRenderCounter() {
+        renderFrames = 0;
+        renderLastTime = performance.now();
+
+        function tick(now) {
+          renderFrames += 1;
+          if (now - renderLastTime >= 1000) {
+            setFps(renderFpsEl, Math.round((renderFrames * 1000) / (now - renderLastTime)));
+            renderFrames = 0;
+            renderLastTime = now;
+          }
+          renderAnimId = requestAnimationFrame(tick);
+        }
+
+        renderAnimId = requestAnimationFrame(tick);
+      }
+
+      function startCameraFrameCounter() {
+        cameraFrames = 0;
+        cameraLastTime = performance.now();
+        cameraCallbackActive = true;
+
+        if ("requestVideoFrameCallback" in HTMLVideoElement.prototype) {
+          const onVideoFrame = (now) => {
+            if (!cameraCallbackActive) return;
+            cameraFrames += 1;
+
+            if (now - cameraLastTime >= 1000) {
+              const fps = Math.round((cameraFrames * 1000) / (now - cameraLastTime));
+              setFps(cameraFpsEl, fps);
+              fpsHistory.push(fps);
+              if (fpsHistory.length > maxHistory) fpsHistory.shift();
+              renderGraph();
+              cameraFrames = 0;
+              cameraLastTime = now;
+              showTrackSettings();
+            }
+
+            video.requestVideoFrameCallback(onVideoFrame);
+          };
+
+          video.requestVideoFrameCallback(onVideoFrame);
+          return;
+        }
+
+        settingsEl.textContent =
+          "이 브라우저는 requestVideoFrameCallback을 지원하지 않아 render FPS만 정확히 볼 수 있습니다.";
+      }
+
+      function constraintsFromProfile() {
+        const selected = profiles[quality.value] ?? profiles["720-60"];
+        const videoConstraints = {
+          width: { ideal: selected.width },
+          height: { ideal: selected.height },
+          frameRate: { ideal: selected.frameRate, max: selected.frameRate },
+        };
+
+        if (cameraSelect.value) {
+          videoConstraints.deviceId = { exact: cameraSelect.value };
+        };
+
+        return {
+          video: videoConstraints,
+          audio: false,
+        };
+      }
+
+      async function startCam() {
+        try {
+          stopCam();
+          error.style.display = "none";
+
+          stream = await navigator.mediaDevices.getUserMedia(constraintsFromProfile());
+          video.srcObject = stream;
+          await video.play();
+          await refreshCameraList(stream.getVideoTracks()[0]?.getSettings?.().deviceId);
+
+          startScreen.style.display = "none";
+          stopBtn.hidden = false;
+          showTrackSettings();
+          startRenderCounter();
+          startCameraFrameCounter();
+        } catch (err) {
+          error.style.display = "block";
+          error.textContent = `카메라 접근 오류: ${err.message}`;
+          startScreen.style.display = "flex";
+        }
+      }
+
+      function stopCam() {
+        cameraCallbackActive = false;
+        if (renderAnimId) cancelAnimationFrame(renderAnimId);
+        renderAnimId = null;
+
+        if (stream) {
+          stream.getTracks().forEach((track) => track.stop());
+          stream = null;
+        }
+
+        video.srcObject = null;
+        cameraFpsEl.textContent = "--";
+        renderFpsEl.textContent = "--";
+        resolutionEl.textContent = "--";
+        settingsEl.textContent = "카메라 설정: --";
+        fpsHistory.length = 0;
+        renderGraph();
+        stopBtn.hidden = true;
+        startScreen.style.display = "flex";
+      }
+
+      startBtn.addEventListener("click", startCam);
+      stopBtn.addEventListener("click", stopCam);
+      quality.addEventListener("change", () => {
+        if (stream) startCam();
+      });
+      cameraSelect.addEventListener("change", () => {
+        if (stream) startCam();
+      });
+      window.addEventListener("beforeunload", stopCam);
+      refreshCameraList().catch(() => {});
+    </script>
+  </body>
+</html>

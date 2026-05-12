@@ -1,0 +1,52 @@
+paths:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  outputs_dir: outputs
+  checkpoints_dir: outputs/checkpoints
+  reports_dir: outputs/reports
+  label_candidates: data/label_candidates.csv
+  selected_labels: data/selected_labels.json
+  selected_labels_small: data/selected_labels_small.json
+  subset_manifest: data/sample_subset_manifest.csv
+  processed_npz: data/processed/sign_word_subset.npz
+
+data:
+  quick_test: true
+  max_classes: 8
+  max_samples_per_class: 30
+  sequence_length: 32
+  min_samples_per_class: 1
+  validation_ratio: 0.2
+  random_seed: 42
+
+preprocess:
+  normalize: true
+  fill_missing: zero
+  feature_dims: 3
+  landmark_layout: mediapipe_xyz
+  feature_count: 225
+  normalization: shoulder-center + shoulder-width scale
+
+train:
+  epochs: 80
+  batch_size: 64
+  learning_rate: 0.001
+  hidden_size: 64
+  num_layers: 1
+  dropout: 0.3
+  rnn_type: gru
+  model_type: cnn_gru
+  conv_channels: 64
+  num_heads: 4
+
+realtime:
+  window_size: 32
+  confidence_threshold: 0.75
+  max_missing_frames: 3
+  min_segment_frames: 8
+  temperature: 0.7
+  tta_enabled: true
+
+services:
+  tts_backend: local
+  stt_backend: local
