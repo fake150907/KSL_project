@@ -3,9 +3,13 @@ from __future__ import annotations
 from config import Config
 
 
-def summarize(conversation: list[str]) -> str:
+def summarize(conversation: list[str] | str) -> str:
     if not Config.ANTHROPIC_API_KEY:
         raise RuntimeError("ANTHROPIC_API_KEY 또는 ANTROPIC_API_KEY 환경변수가 설정되어 있지 않습니다.")
+
+    # conversation이 string으로 잘못 넘어와도 list로 정규화
+    if isinstance(conversation, str):
+        conversation = [line for line in conversation.splitlines() if line.strip()]
 
     try:
         import anthropic

@@ -42,3 +42,7 @@ web_backup_before_web5
 Thumbs.db
 .vscode/
 
+# 제가 uv 써서 생성한 가상환경 폴더입니다. 필요 없을 것 같아서 추가했습니다. - 서민재
+.venv/
+__pycache__/
+*.pyc

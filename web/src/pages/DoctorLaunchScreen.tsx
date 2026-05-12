@@ -60,7 +60,7 @@ export default function DoctorLaunchScreen({ onSessionReset }: DoctorLaunchScree
         const patch = {
             diagnosisSummary: payload.diagnosisSummary,
             isSent: !!payload.isSent,
-            deliveryStatus: payload.deliveryStatus || (payload.isSent ? 'kakao_sent' : 'clipboard_copied'),
+            deliveryStatus: payload.deliveryStatus ?? (payload.isSent ? 'kakao_sent' : 'pending'),
             sentAt: payload.sentAt || new Date().toISOString(),
         }
 
@@ -138,7 +138,10 @@ export default function DoctorLaunchScreen({ onSessionReset }: DoctorLaunchScree
 
     const getDeliveryLabel = (record: MedicalRecord) => {
         if (record.deliveryStatus === 'kakao_sent' || record.isSent) return '카카오톡 전송 완료'
+        if (record.deliveryStatus === 'clipboard_copied') return '클립보드 복사 완료'
         if (record.deliveryStatus === 'failed') return '전송 실패'
+        // ✅ pending이지만 요약이 있으면 환자가 카카오 수령을 거부한 것 → 내역은 저장됨
+        if (record.deliveryStatus === 'pending' && record.diagnosisSummary) return '환자 수령 거부 (내역 저장됨)'
         return '미전송'
     }
 
@@ -146,6 +149,8 @@ export default function DoctorLaunchScreen({ onSessionReset }: DoctorLaunchScree
         if (record.deliveryStatus === 'kakao_sent' || record.isSent) return 'text-emerald-500'
         if (record.deliveryStatus === 'clipboard_copied') return 'text-amber-500'
         if (record.deliveryStatus === 'failed') return 'text-red-500'
+        // ✅ pending이지만 요약 있으면 저장 완료 → 파란색으로 구분
+        if (record.deliveryStatus === 'pending' && record.diagnosisSummary) return 'text-blue-400'
         return 'text-slate-400'
     }
 
@@ -288,7 +293,11 @@ export default function DoctorLaunchScreen({ onSessionReset }: DoctorLaunchScree
                                                         <span className="text-slate-600 font-medium truncate">메모: {memoPreview}</span>
                                                     </div>
                                                 </div>
-                                                <button onClick={() => setSelectedRecord(r)} className="w-full sm:w-auto px-4 md:px-6 py-2.5 md:py-3 rounded-lg md:rounded-xl text-xs md:text-sm font-black text-blue-600 bg-blue-50 hover:bg-blue-100 transition-colors shrink-0">상세 기록 보기</button>
+                                                <button onClick={() => {
+                                                    const fresh = JSON.parse(localStorage.getItem('medical_records') || '[]') as MedicalRecord[]
+                                                    const freshRecord = fresh.find(f => f.id === r.id) || r
+                                                    setSelectedRecord(freshRecord)
+                                                }} className="w-full sm:w-auto px-4 md:px-6 py-2.5 md:py-3 rounded-lg md:rounded-xl text-xs md:text-sm font-black text-blue-600 bg-blue-50 hover:bg-blue-100 transition-colors shrink-0">상세 기록 보기</button>
                                             </div>
                                         )
                                     })}
