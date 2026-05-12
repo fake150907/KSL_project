@@ -1,41 +1,48 @@
 from __future__ import annotations
-
 from config import Config
-
 
 def summarize(conversation: list[str] | str) -> str:
     if not Config.ANTHROPIC_API_KEY:
-        raise RuntimeError("ANTHROPIC_API_KEY 또는 ANTROPIC_API_KEY 환경변수가 설정되어 있지 않습니다.")
+        raise RuntimeError("ANTHROPIC_API_KEY가 설정되어 있지 않습니다.")
 
-    # conversation이 string으로 잘못 넘어와도 list로 정규화
     if isinstance(conversation, str):
         conversation = [line for line in conversation.splitlines() if line.strip()]
 
     try:
         import anthropic
     except ImportError as exc:
-        raise RuntimeError("anthropic 패키지가 설치되어 있지 않습니다. requirements.txt를 설치해주세요.") from exc
+        raise RuntimeError("anthropic 패키지가 설치되어 있지 않습니다.") from exc
 
     prompt = _build_prompt(conversation)
+    
+    print("\n[DEBUG - ai_client.py] Claude API 통신 준비")
+    print(f"[DEBUG - ai_client.py] 사용할 모델: {Config.ANTHROPIC_MODEL}")
+    print(f"[DEBUG - ai_client.py] 프롬프트 길이: {len(prompt)}")
+
     try:
         client = anthropic.Anthropic(api_key=Config.ANTHROPIC_API_KEY)
+        print("[DEBUG - ai_client.py] Anthropic API에 요청 전송 중...")
+        
         message = client.messages.create(
             model=Config.ANTHROPIC_MODEL,
             max_tokens=900,
             messages=[{"role": "user", "content": prompt}],
         )
+        
+        print("[DEBUG - ai_client.py] Anthropic API 응답 수신 완료")
+        print(f"[DEBUG - ai_client.py] 원본 응답 객체: {message}")
+        
         content = message.content[0]
         text = getattr(content, "text", "")
+        
+        if not text.strip():
+            print("[DEBUG - ai_client.py] ❌ 경고: 반환된 텍스트가 비어있습니다.")
+            
         return text.strip()
-    except anthropic.AuthenticationError as exc:
-        raise RuntimeError("Anthropic API 키가 유효하지 않습니다.") from exc
-    except anthropic.RateLimitError as exc:
-        raise RuntimeError("Anthropic API 요청 한도를 초과했습니다.") from exc
-    except anthropic.APIConnectionError as exc:
-        raise RuntimeError("Anthropic API 서버에 연결할 수 없습니다.") from exc
+        
     except Exception as exc:
+        print(f"[DEBUG - ai_client.py] ❌ Claude 통신/처리 중 예외 발생: {exc}")
         raise RuntimeError(f"Claude 요약 실패: {exc}") from exc
-
 
 def _build_prompt(conversation: list[str]) -> str:
     joined = "\n".join(str(item).strip() for item in conversation if str(item).strip())

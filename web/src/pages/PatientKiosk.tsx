@@ -97,8 +97,6 @@ export default function PatientKiosk({
 
       // ✅ 요약 생성 후 소켓으로 의사 쪽에 전달 (카카오 전송 여부와 무관)
       const saveSummary = async () => {
-        // buildChatText()는 string 반환 → 폴백용으로만 사용
-        // buildClinicalSummaryInput()은 list[str] 반환 → 백엔드 ai_client.py가 기대하는 형식
         let summaryText = buildChatText()
         try {
           const res = await fetch('/api/summary', {
@@ -107,12 +105,20 @@ export default function PatientKiosk({
             body: JSON.stringify({ conversation: buildClinicalSummaryInput() }),
           })
           const data = await res.json().catch(() => ({}))
-          if (res.ok && data.summary) summaryText = data.summary
-        } catch { /* 실패해도 원본 대화 텍스트 사용 */ }
+          
+          if (res.ok && data.summary) {
+             summaryText = data.summary
+          } else {
+             // API 응답이 정상이 아닐 경우 콘솔에 에러 출력
+             console.error("요약 API 호출 실패:", data.error || res.statusText)
+          }
+        } catch (error) { 
+          // 네트워크 오류 등 예외 발생 시 콘솔에 출력 후 폴백 텍스트 사용
+          console.error("요약 요청 중 네트워크 예외 발생:", error)
+        }
 
         setCachedSummary(summaryText)
 
-        // 의사 브라우저의 localStorage를 업데이트하도록 소켓 emit
         socket.emit('diagnosis_summary_saved', {
           patientName: actualPatientName,
           patientPhone: actualPatientPhone,
