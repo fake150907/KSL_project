@@ -507,7 +507,7 @@ export default function PatientKiosk({
                     sessionEnded ? 'bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed' : isDemoMode ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-slate-900 border-slate-950 text-white hover:bg-slate-800'
                   }`}
                 >
-                  {isDemoMode ? `데모: ${activeDemoClipLabel || activeDemoLabel}` : '데모 시연'}
+                  {isDemoMode ? `데모: ${activeDemoLabel}` : '데모 시연'}
                 </button>
                 <button
                   type="button"
@@ -522,12 +522,12 @@ export default function PatientKiosk({
                   <div className="absolute left-0 right-0 bottom-full mb-1 z-50 overflow-hidden rounded-xl border-2 border-slate-200 bg-white shadow-2xl">
                     {validationDemoScenarios.map((scenario, index) => (
                       <button
-                        key={scenario.label}
+                        key={scenario.displayText}
                         onClick={() => handleDemoSelect(scenario)}
                         className="flex w-full items-center gap-2 border-b border-slate-100 px-3 py-2.5 text-left text-sm font-black text-slate-800 last:border-b-0 hover:bg-blue-50"
                       >
                         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-600 text-white text-[10px]">{index + 1}</span>
-                        <span className="truncate">{scenario.label}</span>
+                        <span className="truncate">{scenario.displayText}</span>
                       </button>
                     ))}
                   </div>

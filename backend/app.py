@@ -688,7 +688,8 @@ def predict():
             return jsonify({"error": "Vision dependencies are not installed"}), 503
         if mp_holistic_instance is None:
             return jsonify({"error": "MediaPipe is not available"}), 503
-        if "frame" not in request.files:
+        force_finalize = request.form.get("force_finalize", "false").lower() in {"true", "1", "yes"}
+        if not force_finalize and "frame" not in request.files:
             return jsonify({"error": "No frame provided"}), 400
 
         model_type = normalize_model_type(request.form.get("model_type", "sequence"))
@@ -728,6 +729,98 @@ def predict():
             "no",
         }
         run_model = request.form.get("run_model", "true").lower() != "false"
+
+        if force_finalize:
+            window = get_session_window(client_id)
+            prediction: dict[str, Any] = {
+                "label": None,
+                "confidence": 0.0,
+                "has_hand": None,
+                "has_pose": None,
+                "landmarks": {"left_hand": [], "right_hand": [], "pose": []},
+                "window_progress": len(window),
+                "window_size": window_size,
+                "missing_frames": get_session_misses(client_id),
+                "max_missing_frames": max_missing_frames,
+                "min_segment_frames": min_segment_frames,
+                "segment_frames": None,
+                "sequence_length": sequence_length,
+                "temperature": temperature,
+                "tta_enabled": use_tta,
+                "run_model": run_model,
+                "force_finalize": True,
+                "top_predictions": [],
+                "frame_id": frame_id,
+                "landmark_layout": landmark_layout,
+                "model_type": model_type,
+                "input_size": None,
+                "processed_size": None,
+            }
+
+            segment_frames = list(window)
+            window.clear()
+            set_session_misses(client_id, 0)
+            memory_predictions.pop(client_id, None)
+            prediction["window_progress"] = 0
+            prediction["segmenting"] = False
+            prediction["missing_frames"] = 0
+
+            if len(segment_frames) >= min_segment_frames:
+                label, conf, top_predictions, tta_count = predict_sequence_frames(
+                    model_type,
+                    segment_frames,
+                    temperature=temperature,
+                    use_tta=use_tta,
+                )
+                prediction["top_predictions"] = top_predictions
+                prediction["raw_label"] = label
+                prediction["raw_confidence"] = conf
+                prediction["tta_count"] = tta_count
+                prediction["confidence"] = conf
+                prediction["window_filled"] = True
+                prediction["segment_finalized"] = True
+                prediction["segment_frames"] = len(segment_frames)
+
+                if label and conf >= confidence_threshold:
+                    prediction["label"] = label
+                    prediction["below_threshold"] = False
+                else:
+                    prediction["label"] = None
+                    prediction["below_threshold"] = True
+                    prediction["status"] = "수어 구간은 잡혔지만 신뢰도가 낮습니다."
+            elif segment_frames:
+                prediction["segment_finalized"] = True
+                prediction["segment_frames"] = len(segment_frames)
+                prediction["status"] = "수어 구간이 너무 짧아 예측하지 않았습니다."
+
+            top_log = json.dumps(prediction.get("top_predictions", []), ensure_ascii=False)
+            process_ms = (time.perf_counter() - request_started_at) * 1000
+            prediction["process_ms"] = round(process_ms, 1)
+            print(
+                "Prediction: "
+                f"frame_id={frame_id}, "
+                f"process_ms={process_ms:.1f}, "
+                "input=None, "
+                "processed=None, "
+                f"label={prediction.get('label')}, "
+                f"conf={prediction.get('confidence'):.2f}, "
+                f"raw={prediction.get('raw_label')}/{prediction.get('raw_confidence')}, "
+                f"has_hand={prediction.get('has_hand')}, "
+                f"has_pose={prediction.get('has_pose')}, "
+                f"window={prediction.get('window_progress')}/{prediction.get('window_size')}, "
+                f"segment_frames={prediction.get('segment_frames')}, "
+                f"min_segment_frames={prediction.get('min_segment_frames')}, "
+                f"sequence_length={prediction.get('sequence_length')}, "
+                f"miss={prediction.get('missing_frames')}/{prediction.get('max_missing_frames')}, "
+                f"window_filled={prediction.get('window_filled')}, "
+                f"run_model={prediction.get('run_model')}, "
+                f"force_finalize={prediction.get('force_finalize')}, "
+                f"temp={prediction.get('temperature')}, "
+                f"tta={prediction.get('tta_count')}, "
+                f"top={top_log}",
+                flush=True,
+            )
+            return jsonify({"frame_id": frame_id, "prediction": prediction}), 200
 
         frame_file = request.files["frame"]
         image_pil = Image.open(io.BytesIO(frame_file.read())).convert("RGB")
@@ -773,6 +866,7 @@ def predict():
             "temperature": temperature,
             "tta_enabled": use_tta,
             "run_model": run_model,
+            "force_finalize": False,
             "top_predictions": [],
             "frame_id": frame_id,
             "landmark_layout": landmark_layout,
@@ -862,6 +956,7 @@ def predict():
             f"miss={prediction.get('missing_frames')}/{prediction.get('max_missing_frames')}, "
             f"window_filled={prediction.get('window_filled')}, "
             f"run_model={prediction.get('run_model')}, "
+            f"force_finalize={prediction.get('force_finalize')}, "
             f"temp={prediction.get('temperature')}, "
             f"tta={prediction.get('tta_count')}, "
             f"top={top_log}",
