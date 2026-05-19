@@ -11,39 +11,50 @@ const DEMO_PLAYBACK_RATE = 0.65
 const LIVE_GLOSS_IDLE_MS = 6500
 
 export interface DemoClip {
-  label: string
+  id: string
   src: string
 }
 
 export interface DemoScenario {
-  label: string
+  displayText: string
   clips: DemoClip[]
+  segmentBoundariesSec?: number[]
 }
 
 export const validationDemoScenarios: DemoScenario[] = [
   {
-    label: '오른쪽 + 위 + 통증 + 못견디다',
+    displayText: '상처 + 붕대 + 원하다',
+    segmentBoundariesSec: [4.4, 8.9],
     clips: [
-      { label: '오른쪽', src: 'data/raw/validation_mp4/WORD1343_right_REAL17_F.mp4' },
-      { label: '위', src: 'data/raw/validation_mp4/WORD2100_stomach_REAL17_F.mp4' },
-      { label: '통증', src: 'data/raw/validation_mp4/WORD0689_pain_REAL17_F.mp4' },
-      { label: '못견디다', src: 'data/raw/validation_mp4/WORD0973_cannot_endure_REAL17_F.mp4' },
+      { id: 'merge1', src: 'data/raw/validation_mp4/merge1.mp4' },
     ],
   },
   {
-    label: '소화불량 + 어떻게 + 치료',
+    displayText: '다리 + 골절 + 아프다',
+    segmentBoundariesSec: [3.47, 7.97],
     clips: [
-      { label: '소화불량', src: 'data/raw/validation_mp4/WORD0652_indigestion_REAL17_F.mp4' },
-      { label: '어떻게', src: 'data/raw/validation_mp4/WORD0331_how_REAL17_F.mp4' },
-      { label: '치료', src: 'data/raw/validation_mp4/WORD0064_treatment_REAL17_F.mp4' },
+      { id: 'merge2', src: 'data/raw/validation_mp4/merge2.mp4' },
     ],
   },
   {
-    label: '골절 + 회복 + 얼마',
+    displayText: '소화불량 + 어떻게 + 치료',
+    segmentBoundariesSec: [4.5, 7.233],
     clips: [
-      { label: '골절', src: 'data/raw/validation_mp4/WORD0387_fracture_REAL17_F.mp4' },
-      { label: '회복', src: 'data/raw/validation_mp4/WORD0057_recovery_REAL17_F.mp4' },
-      { label: '얼마', src: 'data/raw/validation_mp4/WORD0436_how_long_REAL17_F.mp4' },
+      { id: 'merge3', src: 'data/raw/validation_mp4/merge3.mp4' },
+    ],
+  },
+  {
+    displayText: '오른쪽 + 위 + 통증 + 못견디다',
+    segmentBoundariesSec: [2.367, 5.5, 8.133],
+    clips: [
+      { id: 'mpeg4', src: 'data/raw/validation_mp4/mpeg4.mp4' },
+    ],
+  },
+  {
+    displayText: '골절 + 회복 + 얼마',
+    segmentBoundariesSec: [3.833, 6.933],
+    clips: [
+      { id: 'mpeg5', src: 'data/raw/validation_mp4/mpeg5.mp4' },
     ],
   },
 ]
@@ -94,6 +105,13 @@ export function useSignLanguage(
   const demoGlossBufferRef = useRef<string[]>([])
   const liveGlossBufferRef = useRef<string[]>([])
   const liveGlossTimerRef = useRef<number | null>(null)
+  const demoMotionPrevRef = useRef<Uint8Array | null>(null)
+  const demoPauseFramesRef = useRef(0)
+  const demoSegmentStartTimeRef = useRef(0)
+  const demoHandFramesSinceBoundaryRef = useRef(0)
+  const demoNextBoundaryIndexRef = useRef(0)
+  const demoSuppressUntilMotionRef = useRef(false)
+  const demoBoundaryFinalizingRef = useRef(false)
 
   const [isRunning, setIsRunning] = useState(false)
   const [isDemoMode, setIsDemoMode] = useState(false)
@@ -150,6 +168,16 @@ export function useSignLanguage(
     return src
   }
 
+  const resetDemoInternalMotionState = useCallback(() => {
+    demoMotionPrevRef.current = null
+    demoPauseFramesRef.current = 0
+    demoSegmentStartTimeRef.current = videoRef.current?.currentTime || 0
+    demoHandFramesSinceBoundaryRef.current = 0
+    demoNextBoundaryIndexRef.current = 0
+    demoSuppressUntilMotionRef.current = false
+    demoBoundaryFinalizingRef.current = false
+  }, [])
+
   const convertLiveGlossToText = useCallback(async () => {
     const words = liveGlossBufferRef.current
     liveGlossBufferRef.current = []
@@ -202,12 +230,19 @@ export function useSignLanguage(
     }
   }, [convertLiveGlossToText])
 
-  const convertDemoGlossToText = useCallback(async (scenario: DemoScenario) => {
-    const words = demoGlossBufferRef.current.length > 0
-      ? demoGlossBufferRef.current
-      : scenario.clips.map((clip) => clip.label)
+  const convertDemoGlossToText = useCallback(async (_scenario: DemoScenario) => {
+    const words = demoGlossBufferRef.current
     const gloss = words.join(' + ')
-    if (!gloss) return
+    if (!gloss) {
+      onMessageRef.current({
+        id: `${Date.now()}-demo-gloss-empty-${Math.random()}`,
+        sender: 'doctor',
+        text: '영상에서 예측된 gloss가 없어 자연어 변환을 실행하지 않았습니다.',
+        timestamp: new Date(),
+        label: '데모 인식 안내',
+      })
+      return
+    }
 
     try {
       // 💡 동적 IP 자동 감지 적용
@@ -236,75 +271,55 @@ export function useSignLanguage(
     }
   }, [])
 
-  const createBlankFrameBlob = useCallback(async () => {
-    const canvas = canvasRef.current || document.createElement('canvas')
-    canvas.width = PREDICT_FRAME_WIDTH
-    canvas.height = PREDICT_FRAME_HEIGHT
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return null
-    ctx.fillStyle = '#000'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-    return await new Promise<Blob | null>((resolve) => {
-      canvas.toBlob((blob) => resolve(blob), 'image/jpeg', JPEG_QUALITY)
-    })
-  }, [])
-
-  const finalizeDemoSegment = useCallback(async () => {
-    if (!isDemoModeRef.current) return
+  const finalizeDemoSegment = useCallback(async (forceFinalize = true) => {
+    if (!isDemoModeRef.current || !forceFinalize) return
 
     const startedAt = Date.now()
     while (isPredictingRef.current && Date.now() - startedAt < 700) {
       await new Promise((resolve) => window.setTimeout(resolve, 40))
     }
 
-    const blob = await createBlankFrameBlob()
-    if (!blob) return
-
     isPredictingRef.current = true
     try {
-      for (let i = 0; i < maxMissingFrames + 2; i += 1) {
-        const frameId = nextFrameIdRef.current + 1
-        nextFrameIdRef.current = frameId
-        latestFrameIdRef.current = frameId
+      const frameId = nextFrameIdRef.current + 1
+      nextFrameIdRef.current = frameId
+      latestFrameIdRef.current = frameId
 
-        const formData = new FormData()
-        formData.append('frame', blob)
-        formData.append('frame_id', frameId.toString())
-        formData.append('model_type', modelType === 'cnn_gru' ? 'sequence' : 'lstm')
-        formData.append('landmark_layout', 'mediapipe_xyz')
-        formData.append('client_id', clientIdRef.current)
-        formData.append('confidence_threshold', confidenceThreshold.toString())
-        formData.append('window_size', windowSize.toString())
-        formData.append('stable_min_count', stableMinCount.toString())
-        formData.append('max_missing_frames', maxMissingFrames.toString())
-        formData.append('min_segment_frames', '8')
-        formData.append('run_model', 'true')
+      const formData = new FormData()
+      formData.append('frame_id', frameId.toString())
+      formData.append('model_type', modelType === 'cnn_gru' ? 'sequence' : 'lstm')
+      formData.append('landmark_layout', 'mediapipe_xyz')
+      formData.append('client_id', clientIdRef.current)
+      formData.append('confidence_threshold', confidenceThreshold.toString())
+      formData.append('window_size', windowSize.toString())
+      formData.append('stable_min_count', stableMinCount.toString())
+      formData.append('max_missing_frames', maxMissingFrames.toString())
+      formData.append('min_segment_frames', '8')
+      formData.append('run_model', 'true')
+      formData.append('tta_enabled', 'false')
+      formData.append('force_finalize', 'true')
 
-        const res = await fetch('/api/predict', { method: 'POST', body: formData })
-        const data = await res.json().catch(() => ({}))
-        const prediction = data.prediction
-        if (!prediction) continue
+      const res = await fetch('/api/predict', { method: 'POST', body: formData, credentials: 'include' })
+      const data = await res.json().catch(() => ({}))
+      const prediction = data.prediction
+      if (!prediction) return
 
-        const pred: Prediction = {
-          label: prediction.label,
-          confidence: prediction.confidence,
-          timestamp: Date.now(),
-          has_hand: prediction.has_hand,
-          window_filled: prediction.window_filled,
-          window_progress: prediction.window_progress,
-          window_size: prediction.window_size,
-          missing_frames: prediction.missing_frames,
-          max_missing_frames: prediction.max_missing_frames,
-          top_predictions: prediction.top_predictions,
-        }
-        setCurrentPrediction(pred)
+      const pred: Prediction = {
+        label: prediction.label,
+        confidence: prediction.confidence,
+        timestamp: Date.now(),
+        has_hand: prediction.has_hand,
+        window_filled: prediction.window_filled,
+        window_progress: prediction.window_progress,
+        window_size: prediction.window_size,
+        missing_frames: prediction.missing_frames,
+        max_missing_frames: prediction.max_missing_frames,
+        top_predictions: prediction.top_predictions,
+      }
+      setCurrentPrediction(pred)
 
-        if (prediction.segment_finalized) {
-          if (pred.label && pred.confidence >= confidenceThreshold) {
-            commitRecognizedWord(pred.label)
-          }
-          break
-        }
+      if (prediction.segment_finalized && pred.label && pred.confidence >= confidenceThreshold) {
+        commitRecognizedWord(pred.label)
       }
     } catch (err) {
       console.error('Failed to finalize demo segment:', err)
@@ -314,12 +329,28 @@ export function useSignLanguage(
   }, [
     commitRecognizedWord,
     confidenceThreshold,
-    createBlankFrameBlob,
     maxMissingFrames,
     modelType,
     stableMinCount,
     windowSize,
   ])
+
+  const finalizeDemoInternalBoundary = useCallback(async () => {
+    if (demoBoundaryFinalizingRef.current) return
+    demoBoundaryFinalizingRef.current = true
+    try {
+      await finalizeDemoSegment(true)
+      peakGestureRef.current = null
+      isHandUpRef.current = false
+    } finally {
+      demoMotionPrevRef.current = null
+      demoPauseFramesRef.current = 0
+      demoSegmentStartTimeRef.current = videoRef.current?.currentTime || 0
+      demoHandFramesSinceBoundaryRef.current = 0
+      demoSuppressUntilMotionRef.current = !demoScenarioRef.current?.segmentBoundariesSec?.length
+      demoBoundaryFinalizingRef.current = false
+    }
+  }, [finalizeDemoSegment])
 
   const stopCamera = useCallback(() => {
     const wasDemoMode = isDemoModeRef.current
@@ -340,6 +371,7 @@ export function useSignLanguage(
     demoScenarioRef.current = null
     demoClipIndexRef.current = 0
     demoGlossBufferRef.current = []
+    resetDemoInternalMotionState()
     if (liveGlossTimerRef.current) {
       window.clearTimeout(liveGlossTimerRef.current)
       liveGlossTimerRef.current = null
@@ -355,7 +387,7 @@ export function useSignLanguage(
       setCurrentPrediction(null)
     }
     clearLandmarkOverlay()
-  }, [clearLandmarkOverlay, convertLiveGlossToText])
+  }, [clearLandmarkOverlay, convertLiveGlossToText, resetDemoInternalMotionState])
 
   const startCamera = useCallback(async () => {
     stopCamera()
@@ -418,7 +450,8 @@ export function useSignLanguage(
     clearLandmarkOverlay()
     setCurrentPrediction(null)
     isPredictingRef.current = false
-    clientIdRef.current = `demo-${scenario.label}-${clip.label}-${Date.now()}`
+    resetDemoInternalMotionState()
+    clientIdRef.current = `demo-${clip.id}-${Date.now()}`
     demoScenarioRef.current = scenario
     demoClipIndexRef.current = clipIndex
     isDemoModeRef.current = true
@@ -436,8 +469,8 @@ export function useSignLanguage(
     }
 
     setIsDemoMode(true)
-    setActiveDemoLabel(scenario.label)
-    setActiveDemoClipLabel(clip.label)
+    setActiveDemoLabel(scenario.displayText)
+    setActiveDemoClipLabel('')
     setIsRunning(true)
 
     await new Promise<void>((resolve) => {
@@ -453,22 +486,23 @@ export function useSignLanguage(
     })
 
     await video.play()
-  }, [clearLandmarkOverlay])
+  }, [clearLandmarkOverlay, resetDemoInternalMotionState])
 
   const startDemoScenario = useCallback(async (scenario: DemoScenario) => {
     stopCamera()
     peakGestureRef.current = null
     isHandUpRef.current = false
     demoGlossBufferRef.current = []
+    resetDemoInternalMotionState()
     await playDemoClip(scenario, 0)
-  }, [playDemoClip, stopCamera])
+  }, [playDemoClip, resetDemoInternalMotionState, stopCamera])
 
   const handleDemoVideoEnded = useCallback(async () => {
     if (!isDemoModeRef.current || !demoScenarioRef.current) return
     const scenario = demoScenarioRef.current
     const nextClipIndex = demoClipIndexRef.current + 1
 
-    await finalizeDemoSegment()
+    await finalizeDemoSegment(!!scenario.segmentBoundariesSec?.length)
 
     if (nextClipIndex < scenario.clips.length) {
       void playDemoClip(scenario, nextClipIndex)
@@ -484,12 +518,13 @@ export function useSignLanguage(
     isDemoModeRef.current = false
     demoScenarioRef.current = null
     demoClipIndexRef.current = 0
+    resetDemoInternalMotionState()
     setIsRunning(false)
     setIsDemoMode(false)
     setActiveDemoLabel('')
     setActiveDemoClipLabel('')
     clearLandmarkOverlay()
-  }, [clearLandmarkOverlay, commitRecognizedWord, convertDemoGlossToText, finalizeDemoSegment, playDemoClip])
+  }, [clearLandmarkOverlay, commitRecognizedWord, convertDemoGlossToText, finalizeDemoSegment, playDemoClip, resetDemoInternalMotionState])
 
   const drawLandmarks = useCallback((ctx: CanvasRenderingContext2D, landmarks: any) => {
     if (!landmarks) return
@@ -555,6 +590,28 @@ export function useSignLanguage(
     drawConnections(landmarks.right_hand, handConnections, '#f97316', 3, 2.5)
   }, [])
 
+  const detectDemoInternalBoundary = useCallback((
+    _ctx: CanvasRenderingContext2D,
+    _width: number,
+    _height: number,
+  ): 'send' | 'suppress' | 'finalize' => {
+    const scenario = demoScenarioRef.current
+    const video = videoRef.current
+    if (!isDemoModeRef.current || !scenario || scenario.clips.length !== 1 || !video) {
+      return 'send'
+    }
+
+    const nextBoundary = scenario.segmentBoundariesSec?.[demoNextBoundaryIndexRef.current]
+    if (nextBoundary !== undefined && !demoBoundaryFinalizingRef.current && video.currentTime >= nextBoundary) {
+      demoNextBoundaryIndexRef.current += 1
+      demoMotionPrevRef.current = null
+      demoPauseFramesRef.current = 0
+      return 'finalize'
+    }
+
+    return 'send'
+  }, [])
+
   const captureAndSend = useCallback(async () => {
     if (!videoRef.current || !canvasRef.current) return
     if (videoRef.current.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return
@@ -588,6 +645,18 @@ export function useSignLanguage(
     }
     ctx.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height)
 
+    const demoBoundaryAction = detectDemoInternalBoundary(ctx, canvasRef.current.width, canvasRef.current.height)
+    if (demoBoundaryAction === 'suppress') {
+      isPredictingRef.current = false
+      return
+    }
+    if (demoBoundaryAction === 'finalize') {
+      isPredictingRef.current = false
+      void finalizeDemoInternalBoundary()
+      return
+    }
+
+    const useInternalDemoSegmentation = isDemoModeRef.current && demoScenarioRef.current?.clips.length === 1
     const frameId = nextFrameIdRef.current + 1
     nextFrameIdRef.current = frameId
     latestFrameIdRef.current = frameId
@@ -603,7 +672,7 @@ export function useSignLanguage(
       formData.append('confidence_threshold', confidenceThreshold.toString())
       formData.append('window_size', windowSize.toString())
       formData.append('stable_min_count', stableMinCount.toString())
-      formData.append('max_missing_frames', maxMissingFrames.toString())
+      formData.append('max_missing_frames', useInternalDemoSegmentation ? '999' : maxMissingFrames.toString())
       formData.append('min_segment_frames', '8')
       formData.append('tta_enabled', 'false')
       formData.append('run_model', (frameId % MODEL_INFERENCE_EVERY_N_FRAMES === 0).toString())
@@ -657,6 +726,8 @@ export function useSignLanguage(
           return
         }
 
+        if (useInternalDemoSegmentation) return
+
         if (pred.has_hand) {
           isHandUpRef.current = true;
           
@@ -693,7 +764,7 @@ export function useSignLanguage(
         isPredictingRef.current = false
       }
     }, 'image/jpeg', JPEG_QUALITY)
-  }, [modelType, confidenceThreshold, windowSize, stableMinCount, maxMissingFrames, commitRecognizedWord, drawLandmarks])
+  }, [modelType, confidenceThreshold, windowSize, stableMinCount, maxMissingFrames, commitRecognizedWord, detectDemoInternalBoundary, drawLandmarks, finalizeDemoInternalBoundary])
 
   useEffect(() => {
     refreshVideoDevices()
