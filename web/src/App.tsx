@@ -159,9 +159,10 @@ export default function App() {
           )
         }
       />
-      <Route path="/doctor/launch" element={<DoctorLaunchScreen onSessionReset={handleSessionReset} />} />
+      <Route path="/agent/launch" element={<DoctorLaunchScreen onSessionReset={handleSessionReset} />} />
+      <Route path="/doctor/launch" element={<Navigate to="/agent/launch" replace />} />
       <Route
-        path="/doctor"
+        path="/agent"
         element={
           <DoctorDashboard
             messages={messages}
@@ -171,6 +172,7 @@ export default function App() {
           />
         }
       />
+      <Route path="/doctor" element={<Navigate to="/agent" replace />} />
       <Route path="/kiosk" element={<KioskLaunchScreen />} />
       <Route
         path="/kiosk/session"
