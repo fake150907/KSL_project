@@ -34,9 +34,9 @@ export default function AdminHome({ onLogout, onSessionReset }: AdminHomeProps) 
     setSidebarOpen(false)
   }
 
-  const startPatient = () => {
+  const startCitizen = () => {
     onSessionReset()
-    navigate('/patient')
+    navigate('/citizen')
   }
 
   const startAgent = () => {
@@ -108,7 +108,7 @@ export default function AdminHome({ onLogout, onSessionReset }: AdminHomeProps) 
 
         <section className="p-4 pb-10 lg:p-6">
           {view === 'dashboard' && <DashboardView />}
-          {view === 'system' && <SystemView startPatient={startPatient} startAgent={startAgent} />}
+          {view === 'system' && <SystemView startCitizen={startCitizen} startAgent={startAgent} />}
           {view === 'statistics' && <StatisticsView />}
           {view === 'logs' && <LogsView />}
           {view === 'settings' && <SettingsView />}
@@ -154,12 +154,12 @@ function DashboardView() {
   )
 }
 
-function SystemView({ startPatient, startAgent }: { startPatient: () => void; startAgent: () => void }) {
+function SystemView({ startCitizen, startAgent }: { startCitizen: () => void; startAgent: () => void }) {
   return (
     <div className="space-y-6">
       <Header title="시스템 시작" description="민원인 전용 화면과 상담원 전용 대시보드를 분리 실행합니다." />
       <div className="grid gap-4 lg:grid-cols-2">
-        <ActionCard title="민원인 전용 시스템 시작" description="키오스크 화면을 열고 카메라 기반 수어 인식 세션을 시작합니다." tone="green" onClick={startPatient} />
+        <ActionCard title="민원인 전용 시스템 시작" description="키오스크 화면을 열고 카메라 기반 수어 인식 세션을 시작합니다." tone="green" onClick={startCitizen} />
         <ActionCard title="상담원 전용 시스템 시작" description="상담원 대시보드에서 대화, 민원 메모, 상담 기록을 관리합니다." tone="primary" onClick={startAgent} />
       </div>
       <Panel title="시스템 모듈 상태">

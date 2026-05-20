@@ -20,7 +20,7 @@ def notify_email():
     if not to_address or "@" not in to_address:
         return jsonify({"error": "유효한 수신 이메일 주소가 필요합니다."}), 400
     if not summary:
-        return jsonify({"error": "전송할 진료 요약 내용이 없습니다."}), 400
+        return jsonify({"error": "전송할 민원 상담 요약 내용이 없습니다."}), 400
 
     try:
         send_email(to_address, summary)
@@ -40,7 +40,7 @@ def notify_kakao():
     summary = str(data.get("summary", "")).strip()
 
     if not summary:
-        return jsonify({"error": "전송할 진료 요약 내용이 없습니다."}), 400
+        return jsonify({"error": "전송할 민원 상담 요약 내용이 없습니다."}), 400
     if not access_token and not refresh_token:
         return jsonify({"error": "카카오 access_token 또는 refresh_token이 필요합니다. 먼저 카카오 OAuth 로그인을 완료해주세요."}), 400
 

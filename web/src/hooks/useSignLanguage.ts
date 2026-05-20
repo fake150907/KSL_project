@@ -193,7 +193,7 @@ export function useSignLanguage(
       const data = await response.json()
       onMessageRef.current({
         id: `${Date.now()}-live-gloss-${Math.random()}`,
-        sender: 'patient',
+        sender: 'citizen',
         text: data.text || gloss,
         timestamp: new Date(),
         label: '수어 문장 변환',
@@ -202,7 +202,7 @@ export function useSignLanguage(
       console.error('Live gloss-to-text failed:', err)
       onMessageRef.current({
         id: `${Date.now()}-live-gloss-fallback-${Math.random()}`,
-        sender: 'patient',
+        sender: 'citizen',
         text: gloss,
         timestamp: new Date(),
         label: '수어 글로스',
@@ -236,7 +236,7 @@ export function useSignLanguage(
     if (!gloss) {
       onMessageRef.current({
         id: `${Date.now()}-demo-gloss-empty-${Math.random()}`,
-        sender: 'doctor',
+        sender: 'agent',
         text: '영상에서 예측된 gloss가 없어 자연어 변환을 실행하지 않았습니다.',
         timestamp: new Date(),
         label: '데모 인식 안내',
@@ -254,7 +254,7 @@ export function useSignLanguage(
       const data = await response.json()
       onMessageRef.current({
         id: `${Date.now()}-demo-gloss-${Math.random()}`,
-        sender: 'patient',
+        sender: 'citizen',
         text: data.text || gloss,
         timestamp: new Date(),
         label: '데모 문장 변환',
@@ -263,7 +263,7 @@ export function useSignLanguage(
       console.error('Demo gloss-to-text failed:', err)
       onMessageRef.current({
         id: `${Date.now()}-demo-gloss-fallback-${Math.random()}`,
-        sender: 'patient',
+        sender: 'citizen',
         text: gloss,
         timestamp: new Date(),
         label: '데모 글로스',

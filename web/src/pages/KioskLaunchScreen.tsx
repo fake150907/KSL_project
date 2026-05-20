@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { PatientData, Step } from '../components/hangul'
+import type { CitizenData, Step } from '../components/hangul'
 import { socket, registerRole } from '../socket'
 
 import {
@@ -12,7 +12,7 @@ export default function KioskLaunchScreen() {
   const navigate = useNavigate()
 
   const [step, setStep] = useState<Step>('start')
-  const [data, setData] = useState<PatientData>({ name: '', dob: '', gender: '', phone: '010' })
+  const [data, setData] = useState<CitizenData>({ name: '', dob: '', gender: '', phone: '010' })
   
   const dataRef = useRef(data)
   // 💡 현재 진행 단계를 추적하기 위한 참조 변수 추가
@@ -33,20 +33,20 @@ export default function KioskLaunchScreen() {
     registerRole('kiosk')
   }, [])
 
-  // socket.io: doctor_ready 수신 → 진료실 이동
+  // socket.io: agent_ready 수신 → 상담실 이동
   useEffect(() => {
-    const handleDoctorReady = () => {
+    const handleAgentReady = () => {
       // 💡 탑승객이 모두 탑승한 상태(waiting)인지 확인 후 기차 출발(navigate)
       if (stepRef.current === 'waiting') {
-        navigate('/kiosk/session', { state: { patientData: dataRef.current } })
+        navigate('/kiosk/session', { state: { citizenData: dataRef.current } })
       } else {
-        console.warn('의사가 준비되었으나, 환자 정보 입력이 완료되지 않았습니다.')
+        console.warn('상담원이 준비되었으나, 민원인 정보 입력이 완료되지 않았습니다.')
       }
     }
 
-    socket.on('doctor_ready', handleDoctorReady)
+    socket.on('agent_ready', handleAgentReady)
     return () => {
-      socket.off('doctor_ready', handleDoctorReady)
+      socket.off('agent_ready', handleAgentReady)
     }
   }, [navigate])
 
@@ -54,8 +54,8 @@ export default function KioskLaunchScreen() {
 
   const handleFinish = () => {
     setStep('waiting')
-    // socket.io: 환자 도착 알림 → 서버 → 의사 대기실
-    socket.emit('patient_arrived', { patientData: dataRef.current })
+    // socket.io: 민원인 도착 알림 → 서버 → 상담원 대기실
+    socket.emit('citizen_arrived', { citizenData: dataRef.current })
   }
 
   const renderStep = () => {

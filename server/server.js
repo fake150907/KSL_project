@@ -14,7 +14,7 @@ const io = new Server(server, {
 // 연결 상태 관리
 const connectedUsers = {}; // socket.id -> role
 const roleToSocketId = {}; // role -> socket.id (최신 1개만 유지)
-let pendingPatient = null;
+let pendingCitizen = null;
 
 // ─────────────────────────────────────────
 // ICE candidate 큐: offer/answer 이전에
@@ -44,61 +44,61 @@ io.on("connection", (socket) => {
     socket.join(role);
     console.log(`[등록됨] ${role} (Socket ID: ${socket.id})`);
 
-    if (role === "doctor" && pendingPatient) {
-      socket.emit("patient_arrived", { patientData: pendingPatient });
-      pendingPatient = null;
+    if (role === "agent" && pendingCitizen) {
+      socket.emit("citizen_arrived", { citizenData: pendingCitizen });
+      pendingCitizen = null;
     }
   });
 
-  // 2. 환자 접수 알림
-  socket.on("patient_arrived", ({ patientData }) => {
-    console.log(`[환자 도착]`, patientData);
-    const doctorRoom = io.sockets.adapter.rooms.get("doctor");
-    if (doctorRoom && doctorRoom.size > 0) {
-      io.to("doctor").emit("patient_arrived", { patientData });
+  // 2. 민원인 접수 알림
+  socket.on("citizen_arrived", ({ citizenData }) => {
+    console.log(`[민원인 도착]`, citizenData);
+    const agentRoom = io.sockets.adapter.rooms.get("agent");
+    if (agentRoom && agentRoom.size > 0) {
+      io.to("agent").emit("citizen_arrived", { citizenData });
     } else {
-      console.log("[대기] 의사 미접속 → 환자 정보 보관");
-      pendingPatient = patientData;
+      console.log("[대기] 상담원 미접속 → 민원인 정보 보관");
+      pendingCitizen = citizenData;
     }
   });
 
-  // 3. 의사 진료 시작
-  socket.on("doctor_ready", () => {
-    console.log("[진료 시작] → 키오스크 신호 전송");
-    io.to("kiosk").emit("doctor_ready");
+  // 3. 상담원 상담 시작
+  socket.on("agent_ready", () => {
+    console.log("[상담 시작] → 키오스크 신호 전송");
+    io.to("kiosk").emit("agent_ready");
   });
 
   // 4. 세션 초기화
   socket.on("session_reset", () => {
     console.log("[세션 종료]");
-    io.to("doctor").emit("session_reset");
+    io.to("agent").emit("session_reset");
     io.to("kiosk").emit("session_reset");
-    pendingPatient = null;
+    pendingCitizen = null;
   });
 
   socket.on("session_end", () => {
     console.log("[session_end]");
-    io.to("doctor").emit("session_end");
+    io.to("agent").emit("session_end");
     io.to("kiosk").emit("session_end");
-    pendingPatient = null;
+    pendingCitizen = null;
   });
 
-  // ✅ 수정됨: 채팅 메시지 중계 (의사 ↔ 환자 양방향)
+  // ✅ 수정됨: 채팅 메시지 중계 (상담원 ↔ 민원인 양방향)
   socket.on("chat_message", (msg) => {
-    const senderRole = connectedUsers[socket.id]; // 'doctor' | 'kiosk'
-    const targetRole = senderRole === "doctor" ? "kiosk" : "doctor";
+    const senderRole = connectedUsers[socket.id]; // 'agent' | 'kiosk'
+    const targetRole = senderRole === "agent" ? "kiosk" : "agent";
     console.log(`[채팅] ${senderRole} → ${targetRole}: ${msg.text}`);
     io.to(targetRole).emit("chat_message", msg);
   });
 
-  socket.on("diagnosis_summary_saved", (payload) => {
-    console.log("[diagnosis_summary_saved]");
-    io.to("doctor").emit("diagnosis_summary_saved", payload);
+  socket.on("consultation_summary_saved", (payload) => {
+    console.log("[consultation_summary_saved]");
+    io.to("agent").emit("consultation_summary_saved", payload);
   });
 
   // ─────────────────────────────────────────
   // WebRTC 시그널링
-  // target: 'kiosk' | 'doctor' (role 이름)
+  // target: 'kiosk' | 'agent' (role 이름)
   // → roleToSocketId로 정확한 소켓에만 전송
   // ─────────────────────────────────────────
 

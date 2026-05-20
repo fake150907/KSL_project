@@ -6,36 +6,36 @@ import ChatMessage from '../components/ChatMessage'
 import { useSignLanguage, validationDemoScenarios, type DemoScenario } from '../hooks/useSignLanguage'
 import { socket, registerRole } from '../socket'
 
-interface PatientKioskProps {
+interface CitizenKioskProps {
   messages: ChatMessageType[]
   onNewMessage: (msg: ChatMessageType) => void
   onSessionReset?: () => void
   roomLabel?: string
   sessionEnded?: boolean
-  patientName?: string 
-  patientPhone?: string
+  citizenName?: string 
+  citizenPhone?: string
 }
 
-export default function PatientKiosk({
+export default function CitizenKiosk({
   messages,
   onNewMessage,
   onSessionReset,
-  roomLabel = '진료실 3번',
+  roomLabel = '상담실 3번',
   sessionEnded = false,
-  patientName = '환자',
-  patientPhone = '01000000000',
-}: PatientKioskProps) {
+  citizenName = '민원인',
+  citizenPhone = '01000000000',
+}: CitizenKioskProps) {
   const navigate = useNavigate()
   const location = useLocation()
-  const navState = location.state as { patientData?: { name: string, phone: string } } | null
+  const navState = location.state as { citizenData?: { name: string, phone: string } } | null
   
-  const actualPatientName = navState?.patientData?.name || patientName
-  const actualPatientPhone = navState?.patientData?.phone || patientPhone
+  const actualCitizenName = navState?.citizenData?.name || citizenName
+  const actualCitizenPhone = navState?.citizenData?.phone || citizenPhone
 
   const chatEndRef = useRef<HTMLDivElement>(null)
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
   
-  const [isWaitingForDoctor, setIsWaitingForDoctor] = useState(sessionEnded)
+  const [isWaitingForAgent, setIsWaitingForAgent] = useState(sessionEnded)
   const [sendStatus, setSendStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
   const [sendError, setSendError] = useState('')
   const [showPopup, setShowPopup] = useState(false)
@@ -45,7 +45,7 @@ export default function PatientKiosk({
 
   const handleNewMessageFromKiosk = useCallback((msg: ChatMessageType) => {
     onNewMessage(msg)                    // 자기 화면 업데이트
-    socket.emit('chat_message', msg)     // ✅ 의사에게 전송
+    socket.emit('chat_message', msg)     // ✅ 상담원에게 전송
   }, [onNewMessage])
 
   const {
@@ -77,32 +77,32 @@ export default function PatientKiosk({
   }, [messages])
 
   useEffect(() => {
-    if (!sessionEnded) setIsWaitingForDoctor(false)
+    if (!sessionEnded) setIsWaitingForAgent(false)
   }, [sessionEnded])
 
   useEffect(() => {
-    if (sessionEnded && !isWaitingForDoctor) {
+    if (sessionEnded && !isWaitingForAgent) {
       stopCamera()
       setShowPopup(true)
       setSendStatus('idle')
     }
-  }, [sessionEnded, isWaitingForDoctor, stopCamera])
+  }, [sessionEnded, isWaitingForAgent, stopCamera])
 
   useEffect(() => {
     const handleSessionEnd = () => {
       stopCamera()
-      setIsWaitingForDoctor(false)
+      setIsWaitingForAgent(false)
       setSendStatus('idle')
       setSendError('')
 
-      // ✅ 요약 생성 후 소켓으로 의사 쪽에 전달 (카카오 전송 여부와 무관)
+      // ✅ 요약 생성 후 소켓으로 상담원 쪽에 전달 (카카오 전송 여부와 무관)
       const saveSummary = async () => {
         let summaryText = buildChatText()
         try {
           const res = await fetch('/api/summary', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ conversation: buildClinicalSummaryInput() }),
+            body: JSON.stringify({ conversation: buildConsultationSummaryInput() }),
           })
           const data = await res.json().catch(() => ({}))
           
@@ -119,10 +119,10 @@ export default function PatientKiosk({
 
         setCachedSummary(summaryText)
 
-        socket.emit('diagnosis_summary_saved', {
-          patientName: actualPatientName,
-          patientPhone: actualPatientPhone,
-          diagnosisSummary: summaryText,
+        socket.emit('consultation_summary_saved', {
+          citizenName: actualCitizenName,
+          citizenPhone: actualCitizenPhone,
+          consultationSummary: summaryText,
           isSent: false,
           deliveryStatus: 'pending',
         })
@@ -136,7 +136,7 @@ export default function PatientKiosk({
     return () => {
       socket.off('session_end', handleSessionEnd)
     }
-  }, [stopCamera, actualPatientPhone, actualPatientName, messages])
+  }, [stopCamera, actualCitizenPhone, actualCitizenName, messages])
 
   // WebRTC
   useEffect(() => {
@@ -152,7 +152,7 @@ export default function PatientKiosk({
 
     pc.onicecandidate = (event) => { 
       if (event.candidate) {
-        socket.emit('webrtc_ice_candidate', { target: 'doctor', candidate: event.candidate }); 
+        socket.emit('webrtc_ice_candidate', { target: 'agent', candidate: event.candidate }); 
       }
     };
     
@@ -193,7 +193,7 @@ export default function PatientKiosk({
       try {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        socket.emit('webrtc_offer', { target: 'doctor', offer });
+        socket.emit('webrtc_offer', { target: 'agent', offer });
       } catch (err) {
         console.error('Offer 생성 에러:', err);
       }
@@ -233,18 +233,18 @@ export default function PatientKiosk({
 
   const buildChatText = () => {
     if (messages.length === 0) return '대화 내역이 없습니다.'
-    return messages.map((m) => `[${m.timestamp.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}] ${m.sender === 'doctor' ? '의사' : '환자'}: ${m.text}`).join('\n')
+    return messages.map((m) => `[${m.timestamp.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}] ${m.sender === 'agent' ? '상담원' : '민원인'}: ${m.text}`).join('\n')
   }
 
-  const buildClinicalSummaryInput = () => {
+  const buildConsultationSummaryInput = () => {
     const conversation = messages.map((m) => {
-      const speaker = m.sender === 'doctor' ? 'doctor' : 'patient'
+      const speaker = m.sender === 'agent' ? 'agent' : 'citizen'
       const time = m.timestamp.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
       return `[${time}] ${speaker}: ${m.text}`
     })
 
-    conversation.unshift(`patient_name: ${actualPatientName}`)
-    conversation.unshift(`patient_phone: ${actualPatientPhone}`)
+    conversation.unshift(`citizen_name: ${actualCitizenName}`)
+    conversation.unshift(`citizen_phone: ${actualCitizenPhone}`)
 
     if (messages.length === 0) {
       conversation.push('no conversation messages')
@@ -261,7 +261,7 @@ export default function PatientKiosk({
   }
 
   const handleSendKakaoSummary = async () => {
-    const cleaned = actualPatientPhone.replace(/[^0-9]/g, '')
+    const cleaned = actualCitizenPhone.replace(/[^0-9]/g, '')
     if (cleaned.length < 10) return
 
     const accessToken = localStorage.getItem('KAKAO_ACCESS_TOKEN') || ''
@@ -322,26 +322,26 @@ export default function PatientKiosk({
       // 전송 성공 시 UI 업데이트 (사용자는 여기서 '확인' 버튼을 보게 됩니다)
       setSendStatus('sent')
 
-      // ✅ 소켓 emit → DoctorLaunchScreen의 applyDiagnosisSummary 트리거
+      // ✅ 소켓 emit → AgentLaunchScreen의 applyDiagnosisSummary 트리거
       const sentAt = new Date().toISOString()
-      socket.emit('diagnosis_summary_saved', {
-        patientName: actualPatientName,
-        patientPhone: actualPatientPhone,
-        diagnosisSummary: summaryText,
+      socket.emit('consultation_summary_saved', {
+        citizenName: actualCitizenName,
+        citizenPhone: actualCitizenPhone,
+        consultationSummary: summaryText,
         isSent: true,
         deliveryStatus: 'kakao_sent',
         sentAt,
       })
 
       // ✅ localStorage 직접 패치 (모달 바로 열어도 반영되도록)
-      const savedRecords = JSON.parse(localStorage.getItem('medical_records') || '[]')
-      const normalizedPhone = actualPatientPhone.replace(/\D/g, '')
-      const recIdx = savedRecords.findIndex((r: { patientPhone?: string }) =>
-        (r.patientPhone || '').replace(/\D/g, '') === normalizedPhone
+      const savedRecords = JSON.parse(localStorage.getItem('consultation_records') || '[]')
+      const normalizedPhone = actualCitizenPhone.replace(/\D/g, '')
+      const recIdx = savedRecords.findIndex((r: { citizenPhone?: string }) =>
+        (r.citizenPhone || '').replace(/\D/g, '') === normalizedPhone
       )
       if (recIdx >= 0) {
-        savedRecords[recIdx] = { ...savedRecords[recIdx], diagnosisSummary: summaryText, isSent: true, deliveryStatus: 'kakao_sent', sentAt }
-        localStorage.setItem('medical_records', JSON.stringify(savedRecords))
+        savedRecords[recIdx] = { ...savedRecords[recIdx], consultationSummary: summaryText, isSent: true, deliveryStatus: 'kakao_sent', sentAt }
+        localStorage.setItem('consultation_records', JSON.stringify(savedRecords))
       }
 
     } catch (err) {
@@ -349,23 +349,23 @@ export default function PatientKiosk({
       try { await navigator.clipboard.writeText(summaryText) } catch { /* ignore */ }
 
       const sentAt = new Date().toISOString()
-      socket.emit('diagnosis_summary_saved', {
-        patientName: actualPatientName,
-        patientPhone: actualPatientPhone,
-        diagnosisSummary: summaryText,
+      socket.emit('consultation_summary_saved', {
+        citizenName: actualCitizenName,
+        citizenPhone: actualCitizenPhone,
+        consultationSummary: summaryText,
         isSent: false,
         deliveryStatus: 'clipboard_copied',
         sentAt,
       })
 
-      const savedRecords = JSON.parse(localStorage.getItem('medical_records') || '[]')
-      const normalizedPhone = actualPatientPhone.replace(/\D/g, '')
-      const recIdx = savedRecords.findIndex((r: { patientPhone?: string }) =>
-        (r.patientPhone || '').replace(/\D/g, '') === normalizedPhone
+      const savedRecords = JSON.parse(localStorage.getItem('consultation_records') || '[]')
+      const normalizedPhone = actualCitizenPhone.replace(/\D/g, '')
+      const recIdx = savedRecords.findIndex((r: { citizenPhone?: string }) =>
+        (r.citizenPhone || '').replace(/\D/g, '') === normalizedPhone
       )
       if (recIdx >= 0) {
-        savedRecords[recIdx] = { ...savedRecords[recIdx], diagnosisSummary: summaryText, isSent: false, deliveryStatus: 'clipboard_copied', sentAt }
-        localStorage.setItem('medical_records', JSON.stringify(savedRecords))
+        savedRecords[recIdx] = { ...savedRecords[recIdx], consultationSummary: summaryText, isSent: false, deliveryStatus: 'clipboard_copied', sentAt }
+        localStorage.setItem('consultation_records', JSON.stringify(savedRecords))
       }
 
       setSendError(err instanceof Error ? err.message : '전송 실패');
@@ -382,29 +382,29 @@ export default function PatientKiosk({
       const summaryText = cachedSummary || buildChatText()
       const sentAt = new Date().toISOString()
 
-      socket.emit('diagnosis_summary_saved', {
-        patientName: actualPatientName,
-        patientPhone: actualPatientPhone,
-        diagnosisSummary: summaryText,
+      socket.emit('consultation_summary_saved', {
+        citizenName: actualCitizenName,
+        citizenPhone: actualCitizenPhone,
+        consultationSummary: summaryText,
         isSent: false,
         deliveryStatus: 'pending',
         sentAt,
       })
 
-      const savedRecords = JSON.parse(localStorage.getItem('medical_records') || '[]')
-      const normalizedPhone = actualPatientPhone.replace(/\D/g, '')
-      const recIdx = savedRecords.findIndex((r: { patientPhone?: string }) =>
-        (r.patientPhone || '').replace(/\D/g, '') === normalizedPhone
+      const savedRecords = JSON.parse(localStorage.getItem('consultation_records') || '[]')
+      const normalizedPhone = actualCitizenPhone.replace(/\D/g, '')
+      const recIdx = savedRecords.findIndex((r: { citizenPhone?: string }) =>
+        (r.citizenPhone || '').replace(/\D/g, '') === normalizedPhone
       )
       if (recIdx >= 0) {
         savedRecords[recIdx] = {
           ...savedRecords[recIdx],
-          diagnosisSummary: summaryText,
+          consultationSummary: summaryText,
           isSent: false,
           deliveryStatus: 'pending',
           sentAt,
         }
-        localStorage.setItem('medical_records', JSON.stringify(savedRecords))
+        localStorage.setItem('consultation_records', JSON.stringify(savedRecords))
       }
     }
 
@@ -420,7 +420,7 @@ export default function PatientKiosk({
   return (
     <div className="fixed inset-0 bg-slate-100 flex flex-col overflow-hidden">
       
-      {isWaitingForDoctor && (
+      {isWaitingForAgent && (
         <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-white/95 backdrop-blur-md px-4 text-center">
           <div className="relative w-20 h-20 md:w-28 md:h-28 mb-6 md:mb-8">
             <div className="absolute inset-0 border-4 md:border-[6px] border-slate-100 rounded-full"></div>
@@ -431,15 +431,15 @@ export default function PatientKiosk({
               </svg>
             </div>
           </div>
-          <h2 className="text-2xl md:text-3xl font-black text-slate-800 mb-4 tracking-tight">진료실을 준비하고 있습니다</h2>
-          <p className="text-sm md:text-lg text-slate-500 font-medium">의사 선생님이 이전 진료를 정리 중입니다. 잠시만 기다려주세요.</p>
+          <h2 className="text-2xl md:text-3xl font-black text-slate-800 mb-4 tracking-tight">상담실을 준비하고 있습니다</h2>
+          <p className="text-sm md:text-lg text-slate-500 font-medium">상담원이 이전 상담를 정리 중입니다. 잠시만 기다려주세요.</p>
         </div>
       )}
 
       <header className="flex-shrink-0 flex items-center justify-between px-6 py-3 border-b border-slate-200 bg-white z-10 shadow-sm">
         <div className="flex flex-col gap-0.5">
           <span className="text-xl font-black tracking-tight text-slate-900">수어 통역 키오스크</span>
-          <span className="text-sm text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded-md inline-block w-fit">{roomLabel} - {actualPatientName}님</span>
+          <span className="text-sm text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded-md inline-block w-fit">{roomLabel} - {actualCitizenName}님</span>
         </div>
         <div className="flex flex-col items-end gap-0.5">
           <span className="text-2xl font-black tabular-nums text-slate-800">{clock}</span>
@@ -496,7 +496,7 @@ export default function PatientKiosk({
                   sessionEnded ? 'bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed' : isRunning ? 'bg-red-50 border-red-200 text-red-600 hover:bg-red-100' : 'bg-blue-600 border-blue-700 text-white hover:bg-blue-700 shadow-blue-100'
                 }`}
               >
-                {sessionEnded ? '진료 종료됨' : isRunning ? '카메라 중지' : '카메라 시작'}
+                {sessionEnded ? '상담 종료됨' : isRunning ? '카메라 중지' : '카메라 시작'}
               </button>
 
               <div className="relative flex items-stretch gap-2 flex-1">
@@ -559,7 +559,7 @@ export default function PatientKiosk({
                 </div>
                 <div>
                   <p className="text-base font-black text-slate-600">대화 내역이 없습니다</p>
-                  <p className="text-xs text-slate-500 mt-1 font-medium">진료가 시작되면 대화 내용이 기록됩니다</p>
+                  <p className="text-xs text-slate-500 mt-1 font-medium">상담이 시작되면 대화 내용이 기록됩니다</p>
                 </div>
               </div>
             ) : (
@@ -568,7 +568,7 @@ export default function PatientKiosk({
             <div ref={chatEndRef} />
           </div>
           <footer className="shrink-0 py-2.5 px-6 border-t border-slate-100 bg-white flex items-center justify-center">
-            <p className="text-xs text-slate-400 font-bold text-center">수어로 증상을 표현해 주세요. 인공지능이 즉시 의사 선생님께 전달합니다.</p>
+            <p className="text-xs text-slate-400 font-bold text-center">수어로 증상을 표현해 주세요. 인공지능이 즉시 상담원께 전달합니다.</p>
           </footer>
         </div>
       </div>
@@ -579,16 +579,16 @@ export default function PatientKiosk({
             <div className="w-14 h-14 rounded-full bg-[#FEE500] flex items-center justify-center mb-3 shrink-0 shadow-lg shadow-yellow-100">
               <svg className="w-7 h-7" viewBox="0 0 24 24" fill="#3C1E1E"><path d="M12 3C6.477 3 2 6.477 2 10.8c0 2.8 1.718 5.253 4.286 6.72l-.857 3.2 3.715-2.457C10.012 18.41 10.99 18.6 12 18.6c5.523 0 10-3.477 10-7.8S17.523 3 12 3z"/></svg>
             </div>
-            <h2 className="text-2xl font-black text-slate-900 text-center leading-tight mb-1">진료를 마쳤습니다</h2>
-            <p className="text-sm text-slate-500 text-center font-medium">등록하신 휴대전화로<br/>진료 대화 내역을 보내드릴까요?</p>
+            <h2 className="text-2xl font-black text-slate-900 text-center leading-tight mb-1">상담을 마쳤습니다</h2>
+            <p className="text-sm text-slate-500 text-center font-medium">등록하신 휴대전화로<br/>상담 대화 내역을 보내드릴까요?</p>
             
             <div className="flex flex-col items-center justify-center rounded-xl mt-4 mb-5 w-full py-3 bg-slate-50 border-2 border-slate-100 shadow-inner">
-              <span className="text-xs text-slate-400 font-bold mb-1">{actualPatientName}님의 연락처</span>
-              <div className="text-xl font-black text-slate-800 tracking-wider">{formatPhone(actualPatientPhone)}</div>
+              <span className="text-xs text-slate-400 font-bold mb-1">{actualCitizenName}님의 연락처</span>
+              <div className="text-xl font-black text-slate-800 tracking-wider">{formatPhone(actualCitizenPhone)}</div>
             </div>
             
             <div className="flex flex-col w-full gap-2">
-              <button onClick={handleSendKakaoSummary} disabled={sendStatus === 'sending' || actualPatientPhone.length < 10} className={`w-full py-3 rounded-xl text-sm md:text-base font-black flex items-center justify-center gap-2 transition-all ${sendStatus === 'sending' || actualPatientPhone.length < 10 ? 'bg-slate-100 text-slate-300' : 'bg-[#FEE500] text-[#3C1E1E] hover:brightness-105 active:scale-[0.98] shadow-md shadow-yellow-100'}`}>
+              <button onClick={handleSendKakaoSummary} disabled={sendStatus === 'sending' || actualCitizenPhone.length < 10} className={`w-full py-3 rounded-xl text-sm md:text-base font-black flex items-center justify-center gap-2 transition-all ${sendStatus === 'sending' || actualCitizenPhone.length < 10 ? 'bg-slate-100 text-slate-300' : 'bg-[#FEE500] text-[#3C1E1E] hover:brightness-105 active:scale-[0.98] shadow-md shadow-yellow-100'}`}>
                 {sendStatus === 'sending' ? '전송하는 중...' : '카카오톡으로 받기'}
               </button>
               {sendStatus === 'error' && (
@@ -605,7 +605,7 @@ export default function PatientKiosk({
                   <svg className="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3.5"><polyline points="20 6 9 17 4 12"/></svg>
                 </div>
                 <p className="text-xl font-black text-slate-900 mb-2">전송 완료!</p>
-                <p className="text-xs text-slate-500 text-center leading-relaxed font-medium">메시지를 성공적으로 보냈습니다.<br/>진료실을 나가셔도 좋습니다.</p>
+                <p className="text-xs text-slate-500 text-center leading-relaxed font-medium">메시지를 성공적으로 보냈습니다.<br/>상담실을 나가셔도 좋습니다.</p>
                 <button onClick={handleClosePopup} className="mt-6 w-full py-3 rounded-xl text-sm font-black bg-blue-600 text-white hover:bg-blue-700 shadow-md shadow-blue-100 transition-all active:scale-95">확인 (메인으로)</button>
               </div>
             )}

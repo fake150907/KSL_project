@@ -8,7 +8,7 @@ DEFAULT_PROVIDER = os.environ.get("GLOSS_TO_TEXT_PROVIDER", "anthropic").strip()
 DEFAULT_OPENAI_MODEL = os.environ.get("OPENAI_GLOSS_MODEL", "gpt-4.1-mini")
 DEFAULT_ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_GLOSS_MODEL", "claude-haiku-4-5-20251001")
 
-SYSTEM_PROMPT = """You are a medical Korean Sign Language (KSL) gloss translator.
+SYSTEM_PROMPT = """You are a civil-service Korean Sign Language (KSL) gloss translator.
 
 Your only job is to convert the input KSL gloss into ONE short, natural Korean sentence.
 

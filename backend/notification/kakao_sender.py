@@ -58,11 +58,11 @@ def send_kakao_message(access_token: str, summary: str) -> None:
     if not access_token:
         raise ValueError("카카오 access_token이 필요합니다.")
     if not summary:
-        raise ValueError("전송할 진료 요약 내용이 없습니다.")
+        raise ValueError("전송할 민원 상담 요약 내용이 없습니다.")
 
     template = {
         "object_type": "text",
-        "text": f"[수어 진료 요약본]\n\n{summary}",
+        "text": f"[수어 민원 상담 요약본]\n\n{summary}",
         "link": {
             "web_url": "",
             "mobile_web_url": "",

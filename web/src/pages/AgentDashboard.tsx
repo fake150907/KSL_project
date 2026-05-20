@@ -1,20 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import type { ChatMessage as ChatMessageType, DoctorNote } from '../types'
+import type { ChatMessage as ChatMessageType, AgentNote } from '../types'
 import ChatMessage from '../components/ChatMessage'
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition'
 import { registerRole, socket } from '../socket'
 
-interface DoctorDashboardProps {
+interface AgentDashboardProps {
   messages: ChatMessageType[]
   onNewMessage: (msg: ChatMessageType) => void
   onSessionEnd: () => void
   onSessionReset: () => void
-  patientName?: string
-  patientDob?: string
-  patientGender?: string
-  patientPhone?: string
+  citizenName?: string
+  citizenDob?: string
+  citizenGender?: string
+  citizenPhone?: string
 }
 
 const ICE_SERVERS: RTCIceServer[] = [
@@ -34,7 +34,7 @@ const ICE_SERVERS: RTCIceServer[] = [
 
 const VOICE_BAR_COLORS = ['#2563EB', '#38BDF8', '#22C55E', '#F59E0B', '#6366F1', '#14B8A6']
 
-const TAG_STYLES: Record<DoctorNote['tag'], string> = {
+const TAG_STYLES: Record<AgentNote['tag'], string> = {
   문의: 'bg-blue-50 text-blue-700 border-blue-200',
   확인: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   처리: 'bg-violet-50 text-violet-700 border-violet-200',
@@ -61,32 +61,32 @@ const SCENARIO_STEPS = [
   { code: 'SEN0355', sign: '감사합니다', text: '감사합니다' },
 ]
 
-export default function DoctorDashboard({
+export default function AgentDashboard({
   messages,
   onNewMessage,
   onSessionEnd,
   onSessionReset,
-  patientName: propPatientName,
-  patientDob: propPatientDob,
-  patientGender: propPatientGender,
-  patientPhone: propPatientPhone,
-}: DoctorDashboardProps) {
+  citizenName: propCitizenName,
+  citizenDob: propCitizenDob,
+  citizenGender: propCitizenGender,
+  citizenPhone: propCitizenPhone,
+}: AgentDashboardProps) {
   const navigate = useNavigate()
   const location = useLocation()
   const chatEndRef = useRef<HTMLDivElement>(null)
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
 
-  const navState = location.state as { patientData?: { name: string; dob: string; gender: string; phone: string } } | null
-  const citizenName = propPatientName || navState?.patientData?.name || '민원인'
-  const citizenDob = propPatientDob || navState?.patientData?.dob || '미입력'
-  const citizenGender = propPatientGender || navState?.patientData?.gender || '미입력'
-  const citizenPhone = propPatientPhone || navState?.patientData?.phone || ''
+  const navState = location.state as { citizenData?: { name: string; dob: string; gender: string; phone: string } } | null
+  const citizenName = propCitizenName || navState?.citizenData?.name || '민원인'
+  const citizenDob = propCitizenDob || navState?.citizenData?.dob || '미입력'
+  const citizenGender = propCitizenGender || navState?.citizenData?.gender || '미입력'
+  const citizenPhone = propCitizenPhone || navState?.citizenData?.phone || ''
 
   const [videoConnected, setVideoConnected] = useState(false)
-  const [notes, setNotes] = useState<DoctorNote[]>([])
+  const [notes, setNotes] = useState<AgentNote[]>([])
   const [noteInput, setNoteInput] = useState('')
-  const [noteTag, setNoteTag] = useState<DoctorNote['tag']>('문의')
+  const [noteTag, setNoteTag] = useState<AgentNote['tag']>('문의')
   const [replyInput, setReplyInput] = useState('')
   const [showEndConfirm, setShowEndConfirm] = useState(false)
   const [sessionDone, setSessionDone] = useState(false)
@@ -101,16 +101,16 @@ export default function DoctorDashboard({
   const { isActive: isSpeechActive, voiceLevels, start: startSpeech, stop: stopSpeech } = useSpeechRecognition(handleSpeechMessage)
 
   const latestCitizenText = useMemo(
-    () => [...messages].reverse().find((message) => message.sender === 'patient')?.text || '',
+    () => [...messages].reverse().find((message) => message.sender === 'citizen')?.text || '',
     [messages],
   )
   const latestAgentText = useMemo(
-    () => [...messages].reverse().find((message) => message.sender === 'doctor')?.text || '',
+    () => [...messages].reverse().find((message) => message.sender === 'agent')?.text || '',
     [messages],
   )
 
   useEffect(() => {
-    registerRole('doctor')
+    registerRole('agent')
   }, [])
 
   useEffect(() => {
@@ -192,10 +192,10 @@ export default function DoctorDashboard({
     }
   }, [])
 
-  const addNote = (tagOverride?: DoctorNote['tag'], textOverride?: string) => {
+  const addNote = (tagOverride?: AgentNote['tag'], textOverride?: string) => {
     const text = (textOverride ?? noteInput).trim()
     if (!text) return
-    const newNote: DoctorNote = {
+    const newNote: AgentNote = {
       id: `${Date.now()}`,
       text,
       tag: tagOverride ?? noteTag,
@@ -217,7 +217,7 @@ export default function DoctorDashboard({
     if (!text) return
     const msg: ChatMessageType = {
       id: `${Date.now()}-${Math.random()}`,
-      sender: 'doctor',
+      sender: 'agent',
       text,
       timestamp: new Date(),
       label: '상담원',
@@ -238,21 +238,21 @@ export default function DoctorDashboard({
 
   const handleConfirmEnd = () => {
     try {
-      const existingRecords = JSON.parse(localStorage.getItem('medical_records') || '[]')
+      const existingRecords = JSON.parse(localStorage.getItem('consultation_records') || '[]')
       const newRecord = {
         id: Date.now().toString(),
         date: new Date().toISOString(),
         endDate: new Date().toISOString(),
-        patientName: citizenName,
-        patientDob: citizenDob,
-        patientGender: citizenGender,
-        patientPhone: citizenPhone,
+        citizenName: citizenName,
+        citizenDob: citizenDob,
+        citizenGender: citizenGender,
+        citizenPhone: citizenPhone,
         notes,
-        diagnosisSummary: messages.map((message) => `${message.sender === 'doctor' ? '상담원' : '민원인'}: ${message.text}`).join('\n'),
+        consultationSummary: messages.map((message) => `${message.sender === 'agent' ? '상담원' : '민원인'}: ${message.text}`).join('\n'),
         isSent: false,
         deliveryStatus: 'pending',
       }
-      localStorage.setItem('medical_records', JSON.stringify([newRecord, ...existingRecords]))
+      localStorage.setItem('consultation_records', JSON.stringify([newRecord, ...existingRecords]))
     } catch (error) {
       console.error('상담 기록 저장 실패:', error)
     }
@@ -272,13 +272,13 @@ export default function DoctorDashboard({
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900">
+    <div className="min-h-screen w-full overflow-x-hidden bg-slate-100 text-slate-900">
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="flex flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between md:px-6">
-          <div>
-            <p className="text-xs font-black uppercase tracking-[0.24em] text-blue-600">Civil Sign Interpreter</p>
-            <h1 className="mt-1 text-xl font-black tracking-tight text-slate-950 md:text-2xl">수어 통역 상담원 화면</h1>
-            <p className="text-sm font-semibold text-slate-500">{citizenName} 민원인 상담 중</p>
+          <div className="min-w-0">
+            <p className="break-words text-xs font-black uppercase tracking-[0.18em] text-blue-600 sm:tracking-[0.24em]">Civil Sign Interpreter</p>
+            <h1 className="mt-1 break-words text-xl font-black tracking-tight text-slate-950 md:text-2xl">수어 통역 상담원 화면</h1>
+            <p className="break-words text-sm font-semibold text-slate-500">{citizenName} 민원인 상담 중</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className={`rounded-full border px-3 py-1 text-xs font-black ${sessionDone ? 'border-slate-200 bg-slate-50 text-slate-500' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
@@ -297,8 +297,8 @@ export default function DoctorDashboard({
         </div>
       </header>
 
-      <main className="grid gap-3 p-3 md:grid-cols-[minmax(280px,0.95fr)_minmax(320px,1.05fr)] xl:grid-cols-[minmax(300px,0.8fr)_minmax(420px,1.15fr)_minmax(360px,0.9fr)]">
-        <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+      <main className="grid min-w-0 grid-cols-1 gap-3 p-3 md:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.15fr)_minmax(0,0.9fr)]">
+        <section className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white">
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
             <h2 className="text-base font-black">민원인 수어 영상</h2>
             <span className={`rounded-full border px-2.5 py-1 text-xs font-black ${videoConnected ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-500'}`}>
@@ -328,7 +328,7 @@ export default function DoctorDashboard({
               <h3 className="text-sm font-black text-slate-700">민원 메모</h3>
               <span className="text-xs font-bold text-slate-400">{notes.length}개</span>
             </div>
-            <div className="grid grid-cols-[1fr_92px_40px] gap-2">
+            <div className="grid grid-cols-[minmax(0,1fr)_minmax(78px,92px)_40px] gap-2">
               <input
                 value={noteInput}
                 onChange={(event) => setNoteInput(event.target.value)}
@@ -336,7 +336,7 @@ export default function DoctorDashboard({
                 placeholder="메모 입력..."
                 className="h-10 min-w-0 rounded-lg border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-blue-400"
               />
-              <select value={noteTag} onChange={(event) => setNoteTag(event.target.value as DoctorNote['tag'])} className="h-10 rounded-lg border border-slate-200 bg-white px-2 text-sm font-bold outline-none">
+              <select value={noteTag} onChange={(event) => setNoteTag(event.target.value as AgentNote['tag'])} className="h-10 min-w-0 rounded-lg border border-slate-200 bg-white px-2 text-sm font-bold outline-none">
                 <option value="문의">문의</option>
                 <option value="확인">확인</option>
                 <option value="처리">처리</option>
@@ -347,7 +347,7 @@ export default function DoctorDashboard({
               {notes.map((note) => (
                 <article key={note.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
                   <div className="flex items-start justify-between gap-2">
-                    <p className="text-sm font-bold leading-relaxed text-slate-800">{note.text}</p>
+                    <p className="min-w-0 break-words text-sm font-bold leading-relaxed text-slate-800">{note.text}</p>
                     <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-black ${TAG_STYLES[note.tag]}`}>{note.tag}</span>
                   </div>
                   <span className="mt-2 block text-[11px] font-semibold text-slate-400">{timeLabel(note.timestamp)}</span>
@@ -357,7 +357,7 @@ export default function DoctorDashboard({
           </div>
         </section>
 
-        <section className="flex min-h-[620px] flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <section className="flex min-h-[460px] min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white md:min-h-[540px] xl:min-h-[620px]">
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
             <h2 className="text-base font-black">실시간 통역</h2>
             <span className="flex items-center gap-2 text-xs font-black text-emerald-700">
@@ -365,18 +365,18 @@ export default function DoctorDashboard({
             </span>
           </div>
 
-          <div className="grid gap-3 bg-slate-50 p-4 md:grid-cols-2">
-            <div className="min-h-[124px] rounded-lg border border-emerald-200 bg-white p-4">
+          <div className="grid min-w-0 gap-3 bg-slate-50 p-4 sm:grid-cols-2">
+            <div className="min-h-[104px] min-w-0 rounded-lg border border-emerald-200 bg-white p-4 md:min-h-[124px]">
               <p className="text-sm font-black text-emerald-700">민원인 발화</p>
-              <p className="mt-3 text-lg font-black leading-relaxed text-slate-950">{latestCitizenText || '민원인의 수어/문자 입력을 기다리고 있습니다.'}</p>
+              <p className="mt-3 break-words text-base font-black leading-relaxed text-slate-950 md:text-lg">{latestCitizenText || '민원인의 수어/문자 입력을 기다리고 있습니다.'}</p>
             </div>
-            <div className="min-h-[124px] rounded-lg border border-blue-200 bg-white p-4">
+            <div className="min-h-[104px] min-w-0 rounded-lg border border-blue-200 bg-white p-4 md:min-h-[124px]">
               <p className="text-sm font-black text-blue-700">상담원 응답</p>
-              <p className="mt-3 whitespace-pre-wrap text-lg font-black leading-relaxed text-slate-950">{latestAgentText}</p>
+              <p className="mt-3 whitespace-pre-wrap break-words text-base font-black leading-relaxed text-slate-950 md:text-lg">{latestAgentText}</p>
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-4 py-5">
+          <div className="min-h-[220px] flex-1 overflow-y-auto px-4 py-5">
             {messages.length === 0 ? (
               <div className="flex h-full items-center justify-center text-center text-sm font-bold text-slate-300">
                 상담이 시작되면 민원인 발화와 상담원 응답이 여기에 기록됩니다.
@@ -388,7 +388,7 @@ export default function DoctorDashboard({
           </div>
         </section>
 
-        <section className="flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white md:col-span-2 xl:col-span-1">
+        <section className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white md:col-span-2 xl:col-span-1">
           <div className="border-b border-slate-100 px-4 py-3">
             <h2 className="text-base font-black">상담원 답변 작성</h2>
             <p className="mt-1 text-sm font-semibold text-slate-500">답변은 민원인 화면에서 수어/문자로 안내됩니다.</p>
@@ -414,13 +414,13 @@ export default function DoctorDashboard({
               onChange={(event) => setReplyInput(event.target.value)}
               onKeyDown={handleReplyKeyDown}
               placeholder="민원인에게 전달할 답변을 입력하세요."
-              className="h-36 w-full resize-none rounded-lg border border-slate-200 p-4 text-base font-bold leading-relaxed outline-none focus:border-blue-500"
+              className="h-36 w-full min-w-0 resize-none rounded-lg border border-slate-200 p-4 text-base font-bold leading-relaxed outline-none focus:border-blue-500"
             />
             <div className="grid gap-2 sm:grid-cols-2">
-              <button onClick={sendReply} disabled={!replyInput.trim()} className="rounded-lg bg-blue-600 px-4 py-3 text-sm font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-200">
+              <button onClick={sendReply} disabled={!replyInput.trim()} className="whitespace-normal rounded-lg bg-blue-600 px-4 py-3 text-sm font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-200">
                 전송
               </button>
-              <button onClick={isSpeechActive ? stopSpeech : startSpeech} className={`rounded-lg border px-4 py-3 text-sm font-black ${isSpeechActive ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'}`}>
+              <button onClick={isSpeechActive ? stopSpeech : startSpeech} className={`whitespace-normal break-words rounded-lg border px-4 py-3 text-sm font-black ${isSpeechActive ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'}`}>
                 {isSpeechActive ? '음성 입력 중지' : '음성으로 말하기'}
               </button>
             </div>
@@ -428,7 +428,7 @@ export default function DoctorDashboard({
 
           <div className="border-t border-slate-100 p-4">
             <div className="mb-3 flex items-end justify-between">
-              <div>
+              <div className="min-w-0">
                 <h3 className="text-sm font-black text-slate-800">자주쓰는 문장</h3>
                 <p className="mt-1 text-xs font-semibold text-slate-500">문장을 선택하면 답변창에 입력됩니다. 상담원이 수정한 뒤 전송하세요.</p>
               </div>
@@ -439,10 +439,10 @@ export default function DoctorDashboard({
                 <button
                   key={reply.title}
                   onClick={() => setReplyInput(reply.text)}
-                  className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-left hover:border-blue-300 hover:bg-blue-50"
+                  className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 p-3 text-left hover:border-blue-300 hover:bg-blue-50"
                 >
-                  <p className="text-sm font-black text-slate-900">{reply.title}</p>
-                  <p className="mt-1 text-sm font-semibold leading-relaxed text-slate-600">{reply.text}</p>
+                  <p className="break-words text-sm font-black text-slate-900">{reply.title}</p>
+                  <p className="mt-1 break-words text-sm font-semibold leading-relaxed text-slate-600">{reply.text}</p>
                 </button>
               ))}
             </div>
@@ -451,27 +451,27 @@ export default function DoctorDashboard({
           <div className="mt-auto border-t border-slate-100 p-4">
             <div className="grid gap-2">
               <label className="text-sm font-black text-slate-700">업무 분류</label>
-              <select value={taskType} onChange={(event) => setTaskType(event.target.value)} className="h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm font-black outline-none">
+              <select value={taskType} onChange={(event) => setTaskType(event.target.value)} className="h-11 min-w-0 rounded-lg border border-slate-200 bg-white px-3 text-sm font-black outline-none">
                 <option>복지카드 재발급</option>
                 <option>분실 접수</option>
                 <option>본인 확인</option>
                 <option>수수료 면제</option>
               </select>
               <div className="grid gap-2 sm:grid-cols-4 xl:grid-cols-2">
-                <button onClick={() => addNote('처리', `${taskType} 분실 접수 진행`)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-black hover:bg-slate-50">분실 접수</button>
-                <button onClick={() => addNote('확인', '신분증 본인 확인 완료')} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-black hover:bg-slate-50">본인 확인</button>
-                <button onClick={() => addNote('처리', '재발급 수수료 면제 적용')} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-black hover:bg-slate-50">면제 적용</button>
-                <button onClick={() => addNote('문의', '등기우편 수령 안내 완료')} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-black hover:bg-slate-50">수령 안내</button>
+                <button onClick={() => addNote('처리', `${taskType} 분실 접수 진행`)} className="whitespace-normal rounded-lg border border-slate-200 px-3 py-2 text-sm font-black hover:bg-slate-50">분실 접수</button>
+                <button onClick={() => addNote('확인', '신분증 본인 확인 완료')} className="whitespace-normal rounded-lg border border-slate-200 px-3 py-2 text-sm font-black hover:bg-slate-50">본인 확인</button>
+                <button onClick={() => addNote('처리', '재발급 수수료 면제 적용')} className="whitespace-normal rounded-lg border border-slate-200 px-3 py-2 text-sm font-black hover:bg-slate-50">면제 적용</button>
+                <button onClick={() => addNote('문의', '등기우편 수령 안내 완료')} className="whitespace-normal rounded-lg border border-slate-200 px-3 py-2 text-sm font-black hover:bg-slate-50">수령 안내</button>
               </div>
-              <label className="flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-black text-emerald-800">
-                민원인 이해 확인
+              <label className="flex items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-black text-emerald-800">
+                <span className="min-w-0 break-words">민원인 이해 확인</span>
                 <input type="checkbox" checked={understood} onChange={(event) => setUnderstood(event.target.checked)} className="h-5 w-5 accent-emerald-600" />
               </label>
             </div>
           </div>
         </section>
 
-        <section className="rounded-lg border border-slate-200 bg-white p-4 md:col-span-2 xl:col-span-3">
+        <section className="min-w-0 rounded-lg border border-slate-200 bg-white p-4 md:col-span-2 xl:col-span-3">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-base font-black">시나리오 초안</h2>
             <span className="text-xs font-black text-slate-400">{SCENARIO_STEPS.length}단계</span>
@@ -480,8 +480,8 @@ export default function DoctorDashboard({
             {SCENARIO_STEPS.map((step) => (
               <div key={step.code} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
                 <p className="text-xs font-black text-blue-600">{step.code}</p>
-                <p className="mt-1 text-sm font-black text-slate-900">{step.sign}</p>
-                <p className="mt-1 text-sm font-semibold text-slate-500">{step.text}</p>
+                <p className="mt-1 break-words text-sm font-black text-slate-900">{step.sign}</p>
+                <p className="mt-1 break-words text-sm font-semibold text-slate-500">{step.text}</p>
               </div>
             ))}
           </div>

@@ -1,37 +1,37 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { DoctorNote } from '../types'
+import type { AgentNote } from '../types'
 import { registerRole, socket } from '../socket'
 
 interface ConsultationRecord {
   id: string
   date: string
   endDate?: string
-  patientName: string
-  patientDob: string
-  patientGender: string
-  patientPhone: string
-  notes: DoctorNote[]
-  diagnosisSummary?: string
+  citizenName: string
+  citizenDob: string
+  citizenGender: string
+  citizenPhone: string
+  notes: AgentNote[]
+  consultationSummary?: string
   isSent?: boolean
   deliveryStatus?: 'pending' | 'kakao_sent' | 'clipboard_copied' | 'failed'
   sentAt?: string
 }
 
-interface DoctorLaunchScreenProps {
+interface AgentLaunchScreenProps {
   onSessionReset?: () => void
 }
 
 interface SummaryPayload {
-  patientName?: string
-  patientPhone?: string
-  diagnosisSummary: string
+  citizenName?: string
+  citizenPhone?: string
+  consultationSummary: string
   isSent?: boolean
   deliveryStatus?: 'pending' | 'kakao_sent' | 'clipboard_copied' | 'failed'
   sentAt?: string
 }
 
-const TAG_STYLES: Record<DoctorNote['tag'], string> = {
+const TAG_STYLES: Record<AgentNote['tag'], string> = {
   문의: 'bg-blue-50 text-blue-700 border-blue-200',
   확인: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   처리: 'bg-violet-50 text-violet-700 border-violet-200',
@@ -49,22 +49,22 @@ function ServiceLogo({ className = '' }: { className?: string }) {
   )
 }
 
-export default function DoctorLaunchScreen({ onSessionReset }: DoctorLaunchScreenProps) {
+export default function AgentLaunchScreen({ onSessionReset }: AgentLaunchScreenProps) {
   const navigate = useNavigate()
   const [notified, setNotified] = useState(false)
   const [currentTime, setCurrentTime] = useState(() => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }))
   const [showRecords, setShowRecords] = useState(false)
   const [records, setRecords] = useState<ConsultationRecord[]>([])
   const [selectedRecord, setSelectedRecord] = useState<ConsultationRecord | null>(null)
-  const [patientData, setPatientData] = useState<{ name: string; dob: string; gender: string; phone: string } | null>(null)
-  const patientDataRef = useRef(patientData)
+  const [citizenData, setCitizenData] = useState<{ name: string; dob: string; gender: string; phone: string } | null>(null)
+  const citizenDataRef = useRef(citizenData)
 
   useEffect(() => {
-    patientDataRef.current = patientData
-  }, [patientData])
+    citizenDataRef.current = citizenData
+  }, [citizenData])
 
   useEffect(() => {
-    registerRole('doctor')
+    registerRole('agent')
   }, [])
 
   useEffect(() => {
@@ -76,16 +76,16 @@ export default function DoctorLaunchScreen({ onSessionReset }: DoctorLaunchScree
 
   const applySummary = (payload: SummaryPayload) => {
     const normalizedPhone = (value?: string) => (value || '').replace(/\D/g, '')
-    const targetPhone = normalizedPhone(payload.patientPhone)
+    const targetPhone = normalizedPhone(payload.citizenPhone)
     const patch = {
-      diagnosisSummary: payload.diagnosisSummary,
+      consultationSummary: payload.consultationSummary,
       isSent: !!payload.isSent,
       deliveryStatus: payload.deliveryStatus ?? (payload.isSent ? 'kakao_sent' : 'pending'),
       sentAt: payload.sentAt || new Date().toISOString(),
     }
 
-    const saved = JSON.parse(localStorage.getItem('medical_records') || '[]') as ConsultationRecord[]
-    const index = targetPhone ? saved.findIndex((record) => normalizedPhone(record.patientPhone) === targetPhone) : 0
+    const saved = JSON.parse(localStorage.getItem('consultation_records') || '[]') as ConsultationRecord[]
+    const index = targetPhone ? saved.findIndex((record) => normalizedPhone(record.citizenPhone) === targetPhone) : 0
 
     if (index >= 0) {
       saved[index] = { ...saved[index], ...patch }
@@ -93,48 +93,48 @@ export default function DoctorLaunchScreen({ onSessionReset }: DoctorLaunchScree
       saved.unshift({
         id: Date.now().toString(),
         date: new Date().toISOString(),
-        patientName: payload.patientName || '민원인',
-        patientDob: '미입력',
-        patientGender: '미입력',
-        patientPhone: payload.patientPhone || '',
+        citizenName: payload.citizenName || '민원인',
+        citizenDob: '미입력',
+        citizenGender: '미입력',
+        citizenPhone: payload.citizenPhone || '',
         notes: [],
         ...patch,
       })
     }
 
-    localStorage.setItem('medical_records', JSON.stringify(saved))
+    localStorage.setItem('consultation_records', JSON.stringify(saved))
     setRecords(saved)
   }
 
   useEffect(() => {
-    const handlePatientArrived = (payload: { patientData: { name: string; dob: string; gender: string; phone: string } }) => {
+    const handleCitizenArrived = (payload: { citizenData: { name: string; dob: string; gender: string; phone: string } }) => {
       setNotified(true)
-      if (payload?.patientData) setPatientData(payload.patientData)
+      if (payload?.citizenData) setCitizenData(payload.citizenData)
     }
 
     const handleSessionReset = () => {
       setNotified(false)
-      setPatientData(null)
+      setCitizenData(null)
     }
 
-    socket.on('patient_arrived', handlePatientArrived)
+    socket.on('citizen_arrived', handleCitizenArrived)
     socket.on('session_reset', handleSessionReset)
-    socket.on('diagnosis_summary_saved', applySummary)
+    socket.on('consultation_summary_saved', applySummary)
     return () => {
-      socket.off('patient_arrived', handlePatientArrived)
+      socket.off('citizen_arrived', handleCitizenArrived)
       socket.off('session_reset', handleSessionReset)
-      socket.off('diagnosis_summary_saved', applySummary)
+      socket.off('consultation_summary_saved', applySummary)
     }
   }, [])
 
   const handleEnter = () => {
     onSessionReset?.()
-    socket.emit('doctor_ready')
-    navigate('/agent', { state: { patientData: patientDataRef.current } })
+    socket.emit('agent_ready')
+    navigate('/agent', { state: { citizenData: citizenDataRef.current } })
   }
 
   const handleOpenRecords = () => {
-    const saved = localStorage.getItem('medical_records')
+    const saved = localStorage.getItem('consultation_records')
     setRecords(saved ? JSON.parse(saved) : [])
     setShowRecords(true)
   }
@@ -157,7 +157,7 @@ export default function DoctorLaunchScreen({ onSessionReset }: DoctorLaunchScree
     if (record.deliveryStatus === 'kakao_sent' || record.isSent) return '상담 내용 전송 완료'
     if (record.deliveryStatus === 'clipboard_copied') return '클립보드 복사 완료'
     if (record.deliveryStatus === 'failed') return '전송 실패'
-    if (record.deliveryStatus === 'pending' && record.diagnosisSummary) return '민원인 수령 거부 (내역 저장됨)'
+    if (record.deliveryStatus === 'pending' && record.consultationSummary) return '민원인 수령 거부 (내역 저장됨)'
     return '미전송'
   }
 
@@ -202,7 +202,7 @@ export default function DoctorLaunchScreen({ onSessionReset }: DoctorLaunchScree
               </div>
               <div>
                 <h3 className="text-2xl font-black text-slate-950 md:text-3xl">민원인이 도착했습니다</h3>
-                <p className="mt-2 text-lg font-bold text-slate-500">{patientData?.name || '민원인'} 대기 중</p>
+                <p className="mt-2 text-lg font-bold text-slate-500">{citizenData?.name || '민원인'} 대기 중</p>
               </div>
               <button onClick={handleEnter} className="w-full rounded-2xl bg-blue-600 py-5 text-lg font-black text-white shadow-lg shadow-blue-100 hover:bg-blue-700 active:scale-[0.99]">
                 상담 시작하기
@@ -241,15 +241,15 @@ export default function DoctorLaunchScreen({ onSessionReset }: DoctorLaunchScree
               ) : selectedRecord ? (
                 <article className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
                   <div className="grid gap-3 text-sm font-bold text-slate-700 md:grid-cols-2">
-                    <p><span className="text-slate-400">민원인:</span> {selectedRecord.patientName}</p>
+                    <p><span className="text-slate-400">민원인:</span> {selectedRecord.citizenName}</p>
                     <p><span className="text-slate-400">상담 시간:</span> {formatDateTimeRange(selectedRecord.date, selectedRecord.endDate)}</p>
-                    <p><span className="text-slate-400">성별:</span> {selectedRecord.patientGender}</p>
-                    <p><span className="text-slate-400">연락처:</span> {selectedRecord.patientPhone || '미입력'}</p>
+                    <p><span className="text-slate-400">성별:</span> {selectedRecord.citizenGender}</p>
+                    <p><span className="text-slate-400">연락처:</span> {selectedRecord.citizenPhone || '미입력'}</p>
                   </div>
                   <section className="mt-6">
                     <h4 className="text-lg font-black">상담 내용 요약</h4>
                     <p className="mt-3 whitespace-pre-wrap rounded-xl bg-slate-50 p-4 text-sm font-semibold leading-relaxed text-slate-700">
-                      {selectedRecord.diagnosisSummary || '상담 내용이 아직 저장되지 않았습니다.'}
+                      {selectedRecord.consultationSummary || '상담 내용이 아직 저장되지 않았습니다.'}
                     </p>
                   </section>
                   <section className="mt-6">
@@ -278,7 +278,7 @@ export default function DoctorLaunchScreen({ onSessionReset }: DoctorLaunchScree
                       className="flex w-full flex-col gap-3 rounded-2xl border border-slate-100 bg-white p-5 text-left shadow-sm hover:border-blue-200 md:flex-row md:items-center md:justify-between"
                     >
                       <div>
-                        <p className="text-lg font-black text-slate-950">{record.patientName}</p>
+                        <p className="text-lg font-black text-slate-950">{record.citizenName}</p>
                         <p className="mt-1 text-sm font-bold text-slate-500">{formatDateTimeRange(record.date, record.endDate)}</p>
                         <p className="mt-2 line-clamp-1 text-sm font-semibold text-slate-500">{record.notes.map((note) => note.text).join(' / ') || '작성된 메모 없음'}</p>
                       </div>

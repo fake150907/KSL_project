@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dotenv import load_dotenv
 load_dotenv()  # .env 파일을 config import 전에 로드
@@ -93,10 +93,10 @@ memory_misses: dict[str, int] = {}
 memory_predictions: dict[str, deque] = {}
 gloss_to_text_last_called_at: dict[str, float] = {}
 GLOSS_TO_TEXT_MIN_INTERVAL_SECONDS = 6.0
-patient_session_lock = threading.Lock()
-patient_session: dict[str, Any] = {
+citizen_session_lock = threading.Lock()
+citizen_session: dict[str, Any] = {
     "waiting": False,
-    "patientData": None,
+    "citizenData": None,
     "updatedAt": None,
 }
 chat_messages_lock = threading.Lock()
@@ -476,40 +476,40 @@ def health():
     return jsonify({"status": "ok"}), 200
 
 
-@app.route("/api/patient-session", methods=["GET", "POST", "DELETE"])
-def api_patient_session():
+@app.route("/api/citizen-session", methods=["GET", "POST", "DELETE"])
+def api_citizen_session():
     if request.method == "GET":
-        with patient_session_lock:
-            return jsonify(dict(patient_session)), 200
+        with citizen_session_lock:
+            return jsonify(dict(citizen_session)), 200
 
     if request.method == "DELETE":
-        with patient_session_lock:
-            patient_session.update({"waiting": False, "patientData": None, "updatedAt": None})
-            return jsonify(dict(patient_session)), 200
+        with citizen_session_lock:
+            citizen_session.update({"waiting": False, "citizenData": None, "updatedAt": None})
+            return jsonify(dict(citizen_session)), 200
 
     data = request.get_json(silent=True) or {}
-    patient_data = data.get("patientData") or data.get("patient_data") or data
-    if not isinstance(patient_data, dict):
-        return jsonify({"error": "patientData must be an object"}), 400
+    citizen_data = data.get("citizenData") or data.get("citizen_data") or data
+    if not isinstance(citizen_data, dict):
+        return jsonify({"error": "citizenData must be an object"}), 400
 
     normalized = {
-        "name": str(patient_data.get("name", "")).strip(),
-        "dob": str(patient_data.get("dob", "")).strip(),
-        "gender": str(patient_data.get("gender", "")).strip(),
-        "phone": str(patient_data.get("phone", "")).strip(),
+        "name": str(citizen_data.get("name", "")).strip(),
+        "dob": str(citizen_data.get("dob", "")).strip(),
+        "gender": str(citizen_data.get("gender", "")).strip(),
+        "phone": str(citizen_data.get("phone", "")).strip(),
     }
     if not normalized["name"] or not normalized["phone"]:
-        return jsonify({"error": "patient name and phone are required"}), 400
+        return jsonify({"error": "citizen name and phone are required"}), 400
 
-    with patient_session_lock:
-        patient_session.update(
+    with citizen_session_lock:
+        citizen_session.update(
             {
                 "waiting": True,
-                "patientData": normalized,
+                "citizenData": normalized,
                 "updatedAt": int(time.time()),
             }
         )
-        return jsonify(dict(patient_session)), 200
+        return jsonify(dict(citizen_session)), 200
 
 
 @app.route("/api/messages", methods=["GET", "POST", "DELETE"])
@@ -527,7 +527,7 @@ def api_messages():
     message_id = str(data.get("id", "")).strip()
     sender = str(data.get("sender", "")).strip()
     text = str(data.get("text", "")).strip()
-    if not message_id or sender not in {"patient", "doctor"} or not text:
+    if not message_id or sender not in {"citizen", "agent"} or not text:
         return jsonify({"error": "id, sender, and text are required"}), 400
 
     message = {

@@ -1,13 +1,13 @@
 /**
  * useWebRTC.ts
  *
- * 키오스크(환자) ↔ 의사 간 WebRTC 영상통화 훅
+ * 키오스크(민원인) ↔ 상담원 간 WebRTC 영상통화 훅
  *
  * 사용법:
  * const { localRef, remoteRef, startCall, endCall, isConnected } = useWebRTC({ role: 'kiosk' })
  *
- * role: 'kiosk' | 'doctor'
- * - 'doctor' 쪽이 Offer를 먼저 보냄 (발신자)
+ * role: 'kiosk' | 'agent'
+ * - 'agent' 쪽이 Offer를 먼저 보냄 (발신자)
  * - 'kiosk'  쪽이 Answer를 보냄    (수신자)
  */
 
@@ -15,7 +15,7 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import { socket } from "../socket"; // 기존 socket.io 인스턴스
 import { PEER_CONNECTION_CONFIG } from "./webrtcConfig";
 
-type Role = "kiosk" | "doctor";
+type Role = "kiosk" | "agent";
 
 interface UseWebRTCOptions {
   role: Role;
@@ -34,7 +34,7 @@ export function useWebRTC({ role }: UseWebRTCOptions) {
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError]               = useState<string | null>(null);
 
-  const opponent: Role = role === "doctor" ? "kiosk" : "doctor";
+  const opponent: Role = role === "agent" ? "kiosk" : "agent";
 
   // ─────────────────────────────────────────
   // PeerConnection 생성 + 공통 이벤트 설정
@@ -131,10 +131,10 @@ export function useWebRTC({ role }: UseWebRTCOptions) {
   }, []);
 
   // ─────────────────────────────────────────
-  // 통화 시작 (doctor 쪽에서 호출)
+  // 통화 시작 (agent 쪽에서 호출)
   // ─────────────────────────────────────────
   const startCall = useCallback(async () => {
-    if (role !== "doctor") return;
+    if (role !== "agent") return;
     
     setIsConnecting(true);
     setError(null);
@@ -197,16 +197,16 @@ export function useWebRTC({ role }: UseWebRTCOptions) {
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
 
-        socket.emit("webrtc_answer", { target: "doctor", answer });
+        socket.emit("webrtc_answer", { target: "agent", answer });
       } catch (err) {
         setIsConnecting(false);
         console.error("[WebRTC] Answer 생성 실패:", err);
       }
     };
 
-    // Answer 수신 (doctor 쪽)
+    // Answer 수신 (agent 쪽)
     const handleAnswer = async ({ answer }: { answer: RTCSessionDescriptionInit }) => {
-      if (role !== "doctor") return;
+      if (role !== "agent") return;
       try {
         // Remote Description 설정
         await pcRef.current?.setRemoteDescription(new RTCSessionDescription(answer));

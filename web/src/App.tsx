@@ -3,11 +3,11 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import type { ChatMessage } from './types'
 import LoginPage from './pages/LoginPage'
 import AdminHome from './pages/AdminHome'
-import DoctorLaunchScreen from './pages/DoctorLaunchScreen'
-import DoctorDashboard from './pages/DoctorDashboard'
+import AgentLaunchScreen from './pages/AgentLaunchScreen'
+import AgentDashboard from './pages/AgentDashboard'
 import KakaoCallback from './pages/KakaoCallback'
 import KioskLaunchScreen from './pages/KioskLaunchScreen'
-import PatientKiosk from './pages/PatientKiosk'
+import CitizenKiosk from './pages/CitizenKiosk'
 
 const CHANNEL_NAME = 'sign-lang-chat'
 const STORAGE_KEY = 'sign-lang-messages'
@@ -159,12 +159,11 @@ export default function App() {
           )
         }
       />
-      <Route path="/agent/launch" element={<DoctorLaunchScreen onSessionReset={handleSessionReset} />} />
-      <Route path="/doctor/launch" element={<Navigate to="/agent/launch" replace />} />
+      <Route path="/agent/launch" element={<AgentLaunchScreen onSessionReset={handleSessionReset} />} />
       <Route
         path="/agent"
         element={
-          <DoctorDashboard
+          <AgentDashboard
             messages={messages}
             onNewMessage={handleNewMessage}
             onSessionEnd={handleSessionEnd}
@@ -172,12 +171,11 @@ export default function App() {
           />
         }
       />
-      <Route path="/doctor" element={<Navigate to="/agent" replace />} />
       <Route path="/kiosk" element={<KioskLaunchScreen />} />
       <Route
         path="/kiosk/session"
         element={
-          <PatientKiosk
+          <CitizenKiosk
             messages={messages}
             onNewMessage={handleNewMessage}
             onSessionReset={handleSessionReset}
@@ -185,8 +183,8 @@ export default function App() {
           />
         }
       />
-      <Route path="/patient" element={<Navigate to="/kiosk" replace />} />
-      <Route path="/patient/session" element={<Navigate to="/kiosk/session" replace />} />
+      <Route path="/citizen" element={<Navigate to="/kiosk" replace />} />
+      <Route path="/citizen/session" element={<Navigate to="/kiosk/session" replace />} />
       <Route path="/kakao/callback" element={<KakaoCallback />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

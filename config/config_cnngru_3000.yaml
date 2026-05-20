@@ -1,6 +1,6 @@
 # ============================================================
 # CNN-GRU 모델 설정 파일
-# 프로젝트: 양방향 수어 통역 보조 시스템 (의료 도메인)
+# 프로젝트: 양방향 수어 통역 보조 시스템 (민원 도메인)
 # 작성일: 2026-05-10
 # ============================================================
 
@@ -76,7 +76,7 @@ output:
   report: "C:/python_study/KSL_project_minseok/outputs/training_report_cnngru_3000.md"
   loss_curve: "C:/python_study/KSL_project_minseok/outputs/loss_accuracy_curve_cnngru.png"
   confusion_matrix: "C:/python_study/KSL_project_minseok/outputs/confusion_matrix_cnngru.png"
-  confusion_matrix_medical: "C:/python_study/KSL_project_minseok/outputs/confusion_matrix_medical.png"
+  confusion_matrix_civil: "C:/python_study/KSL_project_minseok/outputs/confusion_matrix_civil.png"
 
 # ── 환경 ───────────────────────────────────────────────────
 environment:

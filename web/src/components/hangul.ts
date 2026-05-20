@@ -20,7 +20,7 @@ export function formatPhone(val: string): string {
   return `${d.slice(0,3)}-${d.slice(3,7)}-${d.slice(7)}`
 }
 
-export interface PatientData {
+export interface CitizenData {
   name:   string
   dob:    string
   gender: string

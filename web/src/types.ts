@@ -13,13 +13,13 @@ export interface Prediction {
 
 export interface ChatMessage {
   id: string
-  sender: 'patient' | 'doctor'
+  sender: 'citizen' | 'agent'
   text: string
   timestamp: Date
   label?: string
 }
 
-export interface DoctorNote {
+export interface AgentNote {
   id: string
   text: string
   tag: '문의' | '확인' | '처리'

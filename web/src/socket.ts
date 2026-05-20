@@ -7,7 +7,7 @@ export const socket = io(SOCKET_URL, {
   reconnection: true,
 })
 
-let currentRole: 'kiosk' | 'doctor' | null = null
+let currentRole: 'kiosk' | 'agent' | null = null
 
 socket.on('connect', () => {
   if (currentRole) {
@@ -16,7 +16,7 @@ socket.on('connect', () => {
   }
 })
 
-export function registerRole(role: 'kiosk' | 'doctor') {
+export function registerRole(role: 'kiosk' | 'agent') {
   currentRole = role
   if (socket.connected) {
     socket.emit('register', { role })

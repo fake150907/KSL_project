@@ -1,7 +1,7 @@
 # 🤟 수어 통역 시스템 (Sign Language Interpretation System)
 
-환자(수어 사용자)와 의사 간의 실시간 소통을 돕는 **AI 기반 수어 통역 웹 애플리케이션**입니다.  
-환자는 키오스크에서 카메라로 수어를 입력하고, 의사는 대시보드에서 번역된 텍스트와 음성 인식으로 소통합니다.
+민원인(수어 사용자)와 상담원 간의 실시간 소통을 돕는 **AI 기반 수어 통역 웹 애플리케이션**입니다.  
+민원인는 키오스크에서 카메라로 수어를 입력하고, 상담원는 대시보드에서 번역된 텍스트와 음성 인식으로 소통합니다.
 
 ---
 
@@ -16,10 +16,10 @@ src/
 ├── socket.ts                  # Socket.IO 클라이언트 설정
 │
 ├── pages/
-│   ├── DoctorLaunchScreen.tsx # 의사 대기 화면 (환자 도착 알림 수신)
-│   ├── DoctorDashboard.tsx    # 의사 진료 대시보드
-│   ├── KioskLaunchScreen.tsx  # 환자 키오스크 시작 화면
-│   └── PatientKiosk.tsx       # 환자 수어 입력 화면
+│   ├── AgentLaunchScreen.tsx # 상담원 대기 화면 (민원인 도착 알림 수신)
+│   ├── AgentDashboard.tsx    # 상담원 상담 대시보드
+│   ├── KioskLaunchScreen.tsx  # 민원인 키오스크 시작 화면
+│   └── CitizenKiosk.tsx       # 민원인 수어 입력 화면
 │
 ├── hooks/
 │   ├── useSignLanguage.ts     # 수어 인식 핵심 로직
@@ -38,14 +38,14 @@ src/
 ### 데이터 흐름
 
 ```
-[환자 키오스크]                        [의사 대시보드]
+[민원인 키오스크]                        [상담원 대시보드]
   카메라 영상 캡처                         음성 인식 (Web Speech API)
       ↓                                        ↓
-  /api/predict (백엔드 AI)              ChatMessage (doctor)
+  /api/predict (백엔드 AI)              ChatMessage (agent)
       ↓                                        ↓
   수어 번역 텍스트                    ←── BroadcastChannel ───→
       ↓                                        ↓
-  ChatMessage (patient)              공유 messages 배열 (App.tsx)
+  ChatMessage (citizen)              공유 messages 배열 (App.tsx)
                                           ↓
                                     localStorage 영속화
 ```
@@ -57,7 +57,7 @@ src/
 | 채널 이름 | 용도 |
 |---|---|
 | `sign-lang-chat` | 채팅 메시지 동기화, 세션 시작/종료 이벤트 |
-| `patient-session-notify` | 환자 도착 알림, 의사 입장 확인 신호 |
+| `citizen-session-notify` | 민원인 도착 알림, 상담원 입장 확인 신호 |
 
 ---
 
@@ -80,17 +80,17 @@ interface Prediction {
   // ...기타 프레임 추적 관련 필드
 }
 
-// 환자↔의사 채팅 메시지
+// 민원인↔상담원 채팅 메시지
 interface ChatMessage {
   id: string
-  sender: 'patient' | 'doctor'
+  sender: 'citizen' | 'agent'
   text: string
   timestamp: Date
   label?: string  // 말풍선 위 라벨 (예: '수어 번역')
 }
 
-// 의사의 진료 메모
-interface DoctorNote {
+// 상담원의 상담 메모
+interface AgentNote {
   id: string
   text: string
   tag: '증상' | '관찰' | '처방'
@@ -110,16 +110,16 @@ interface DoctorNote {
 
    | URL | 컴포넌트 | 설명 |
    |---|---|---|
-   | `/` | `DoctorLaunchScreen` | 의사 대기 화면 |
-   | `/doctor` | `DoctorDashboard` | 의사 진료 대시보드 |
-   | `/kiosk` | `KioskLaunchScreen` | 환자 시작 화면 |
-   | `/kiosk/session` | `PatientKiosk` | 환자 수어 입력 화면 |
+   | `/` | `AgentLaunchScreen` | 상담원 대기 화면 |
+   | `/agent` | `AgentDashboard` | 상담원 상담 대시보드 |
+   | `/kiosk` | `KioskLaunchScreen` | 민원인 시작 화면 |
+   | `/kiosk/session` | `CitizenKiosk` | 민원인 수어 입력 화면 |
 
 2. **메시지 브로드캐스팅** — `handleNewMessage`가 호출되면 화면에 표시하는 동시에 `BroadcastChannel`로 다른 탭에 전송하고, `localStorage`에 영속화합니다.
 
 3. **중복 방지** — `seenIds` (Set)로 동일 메시지가 두 번 렌더링되는 것을 막습니다.
 
-4. **세션 관리** — `handleSessionEnd` / `handleSessionReset`으로 진료 시작과 종료를 제어합니다.
+4. **세션 관리** — `handleSessionEnd` / `handleSessionReset`으로 상담 시작과 종료를 제어합니다.
 
 ```ts
 // 핵심 상태
@@ -211,7 +211,7 @@ return {
 
 ### `hooks/useSpeechRecognition.ts` — 음성 인식 로직
 
-**역할:** 의사의 음성을 텍스트로 변환해 채팅 메시지로 전송하고, 실시간 음성 레벨 시각화 데이터를 제공합니다.
+**역할:** 상담원의 음성을 텍스트로 변환해 채팅 메시지로 전송하고, 실시간 음성 레벨 시각화 데이터를 제공합니다.
 
 #### 핵심 기능
 
@@ -241,77 +241,77 @@ return {
 
 ---
 
-### `pages/KioskLaunchScreen.tsx` — 환자 시작 화면
+### `pages/KioskLaunchScreen.tsx` — 민원인 시작 화면
 
-**역할:** 환자가 진료를 시작하기 전에 보는 첫 화면입니다.
+**역할:** 민원인이 상담을 시작하기 전에 보는 첫 화면입니다.
 
 **흐름:**
 
-1. 환자가 **"진료 시작하기"** 버튼을 누름
-2. `patient-session-notify` 채널로 `{ type: 'patient_arrived' }` 메시지 브로드캐스팅
-3. 환자 화면은 **"의사 선생님을 기다리는 중"** 대기 화면으로 전환
-4. 의사가 대시보드에서 입장을 확인하면 `{ type: 'doctor_ready' }` 신호 수신
+1. 민원인이 **"상담 시작하기"** 버튼을 누름
+2. `citizen-session-notify` 채널로 `{ type: 'citizen_arrived' }` 메시지 브로드캐스팅
+3. 민원인 화면은 **"상담원을 기다리는 중"** 대기 화면으로 전환
+4. 상담원이 대시보드에서 입장을 확인하면 `{ type: 'agent_ready' }` 신호 수신
 5. 자동으로 `/kiosk/session` (수어 입력 화면)으로 이동
 
 ---
 
-### `pages/DoctorLaunchScreen.tsx` — 의사 대기 화면
+### `pages/AgentLaunchScreen.tsx` — 상담원 대기 화면
 
-**역할:** 의사가 진료를 시작하기 전 환자 도착 알림을 기다리는 화면입니다.
+**역할:** 상담원이 상담을 시작하기 전 민원인 도착 알림을 기다리는 화면입니다.
 
 **흐름:**
 
-1. `patient-session-notify` 채널을 구독하며 대기
-2. `{ type: 'patient_arrived' }` 수신 시 → **"환자 도착 알림"** 카드로 UI 전환 + 펄스 애니메이션
-3. 의사가 **"진료실 입장하기"** 버튼을 누름
-4. `handleSessionReset()` 호출 → 이전 진료 기록 초기화
-5. `{ type: 'doctor_ready' }` 브로드캐스팅 후 `/doctor` 대시보드로 이동
+1. `citizen-session-notify` 채널을 구독하며 대기
+2. `{ type: 'citizen_arrived' }` 수신 시 → **"민원인 도착 알림"** 카드로 UI 전환 + 펄스 애니메이션
+3. 상담원이 **"상담실 입장하기"** 버튼을 누름
+4. `handleSessionReset()` 호출 → 이전 상담 기록 초기화
+5. `{ type: 'agent_ready' }` 브로드캐스팅 후 `/agent` 대시보드로 이동
 
-**주의:** 입장 버튼을 누를 때 이전 세션을 자동으로 초기화(`onSessionReset`)하므로 이전 환자의 대화 내역이 섞이지 않습니다.
+**주의:** 입장 버튼을 누를 때 이전 세션을 자동으로 초기화(`onSessionReset`)하므로 이전 민원인의 대화 내역이 섞이지 않습니다.
 
 ---
 
-### `pages/PatientKiosk.tsx` — 환자 수어 입력 화면
+### `pages/CitizenKiosk.tsx` — 민원인 수어 입력 화면
 
-**역할:** 환자가 수어로 증상을 전달하는 메인 화면입니다.
+**역할:** 민원인이 수어로 증상을 전달하는 메인 화면입니다.
 
 **핵심 구성:**
 - `useSignLanguage` 훅으로 카메라 + AI 인식 연결
 - `VideoFeed` 컴포넌트로 카메라 영상 + 랜드마크 오버레이 표시
-- `ChatMessage` 컴포넌트로 번역된 수어 및 의사 메시지 표시
-- 세션 종료 시 (`sessionEnded = true`) 진료 종료 화면 표시
+- `ChatMessage` 컴포넌트로 번역된 수어 및 상담원 메시지 표시
+- 세션 종료 시 (`sessionEnded = true`) 상담 종료 화면 표시
 
 **Props:**
 
 ```ts
-interface PatientKioskProps {
+interface CitizenKioskProps {
   messages: ChatMessage[]         // 전체 대화 내역 (App.tsx에서 내려옴)
   onNewMessage: (msg) => void     // 새 메시지 전송 콜백
   onSessionReset: () => void      // 세션 초기화 콜백
-  sessionEnded: boolean           // 진료 종료 여부
+  sessionEnded: boolean           // 상담 종료 여부
 }
 ```
 
 ---
 
-### `pages/DoctorDashboard.tsx` — 의사 진료 대시보드
+### `pages/AgentDashboard.tsx` — 상담원 상담 대시보드
 
-**역할:** 의사가 환자의 수어 번역 내용을 확인하고, 음성으로 답변하며 진료 메모를 작성하는 화면입니다.
+**역할:** 상담원이 민원인의 수어 번역 내용을 확인하고, 음성으로 답변하며 상담 메모를 작성하는 화면입니다.
 
 **핵심 구성:**
-- `useSpeechRecognition` 훅으로 의사 음성 인식
-- `useSignLanguage` 훅으로 환자 카메라 피드 미리보기 (소형)
+- `useSpeechRecognition` 훅으로 상담원 음성 인식
+- `useSignLanguage` 훅으로 민원인 카메라 피드 미리보기 (소형)
 - `ChatMessage` 컴포넌트로 양방향 대화 표시
-- 진료 메모 작성 (`DoctorNote` — 증상/관찰/처방 태그)
-- **"진료 끝내기"** 버튼으로 세션 종료
+- 상담 메모 작성 (`AgentNote` — 증상/관찰/처방 태그)
+- **"상담 끝내기"** 버튼으로 세션 종료
 
 **Props:**
 
 ```ts
-interface DoctorDashboardProps {
+interface AgentDashboardProps {
   messages: ChatMessage[]
   onNewMessage: (msg) => void
-  onSessionEnd: () => void        // 진료 종료 콜백
+  onSessionEnd: () => void        // 상담 종료 콜백
   onSessionReset: () => void
 }
 ```
@@ -325,7 +325,7 @@ interface DoctorDashboardProps {
 **특이사항:**
 - 영상에 `transform: scaleX(-1)` 적용 → 거울 모드 (카메라 특성상 좌우 반전이 자연스러움)
 - 랜드마크 캔버스도 동일하게 반전해 영상과 정확히 일치시킴
-- `compact` prop으로 크기를 조절할 수 있음 (의사 대시보드 소형 뷰에 사용)
+- `compact` prop으로 크기를 조절할 수 있음 (상담원 대시보드 소형 뷰에 사용)
 - `isRunning`이 `false`이면 빈 아이콘 플레이스홀더를 표시
 
 ```tsx
@@ -343,10 +343,10 @@ interface DoctorDashboardProps {
 
 | 구분 | 정렬 | 색상 |
 |---|---|---|
-| `sender: 'doctor'` (의사) | 오른쪽 | 파란색 (`rgba(37,99,235,0.75)`) |
-| `sender: 'patient'` (환자) | 왼쪽 | 초록색 (`#22c55e`) |
+| `sender: 'agent'` (상담원) | 오른쪽 | 파란색 (`rgba(37,99,235,0.75)`) |
+| `sender: 'citizen'` (민원인) | 왼쪽 | 초록색 (`#22c55e`) |
 
-말풍선 위에 `label` (예: `'수어 번역'`, `'의사'`)을 작게 표시합니다. 시간은 `HH:MM` 형식 (한국어)으로 표시합니다.
+말풍선 위에 `label` (예: `'수어 번역'`, `'상담원'`)을 작게 표시합니다. 시간은 `HH:MM` 형식 (한국어)으로 표시합니다.
 
 ---
 
@@ -358,7 +358,7 @@ interface DoctorDashboardProps {
 
 ### `SignLanguageApp.tsx` — 단일 탭 통합 앱 (레거시)
 
-**역할:** BroadcastChannel 없이 단일 탭 내에서 역할(`launch` → `patient` / `doctor`)을 선택하는 초기 구조입니다. 현재는 `App.tsx`의 라우팅 기반 구조로 대체되었으며, 참고용으로 보존되어 있습니다.
+**역할:** BroadcastChannel 없이 단일 탭 내에서 역할(`launch` → `citizen` / `agent`)을 선택하는 초기 구조입니다. 현재는 `App.tsx`의 라우팅 기반 구조로 대체되었으며, 참고용으로 보존되어 있습니다.
 
 ---
 
@@ -422,10 +422,10 @@ npm run dev
 
 브라우저에서 두 개의 탭을 열어 사용합니다:
 
-- **탭 1 (의사):** `http://localhost:5173/` → 의사 대기 화면
-- **탭 2 (환자):** `http://localhost:5173/kiosk` → 환자 키오스크 화면
+- **탭 1 (상담원):** `http://localhost:5173/` → 상담원 대기 화면
+- **탭 2 (민원인):** `http://localhost:5173/kiosk` → 민원인 키오스크 화면
 
-환자가 "진료 시작하기"를 누르면 의사 탭에 알림이 표시되고, 의사가 "진료실 입장하기"를 누르면 양쪽 탭이 동시에 진료 화면으로 전환됩니다.
+민원인이 "상담 시작하기"를 누르면 상담원 탭에 알림이 표시되고, 상담원이 "상담실 입장하기"를 누르면 양쪽 탭이 동시에 상담 화면으로 전환됩니다.
 
 ---
 

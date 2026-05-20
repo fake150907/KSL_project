@@ -84,7 +84,7 @@ export default function KakaoCallback() {
           }}
           className="h-14 rounded-2xl bg-blue-600 px-8 text-lg font-black text-white shadow-lg shadow-blue-100 transition hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400"
         >
-          {window.opener ? '창 닫기' : '환자 시작 화면으로 이동'}
+          {window.opener ? '창 닫기' : '민원인 시작 화면으로 이동'}
         </button>
       </div>
     </div>

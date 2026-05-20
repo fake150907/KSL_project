@@ -120,7 +120,7 @@ export function useSpeechRecognition(onMessage: (msg: ChatMessage) => void) {
       if (!transcript || !isMounted.current) return
       onMessage({
         id: `${Date.now()}-${Math.random()}`,
-        sender: 'doctor',
+        sender: 'agent',
         text: transcript,
         timestamp: new Date(),
         label: '상담원',

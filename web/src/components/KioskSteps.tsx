@@ -2,16 +2,16 @@ import HangulKeyboard from './HangulKeyboard'
 import Numpad from './Numpad'
 import { Header, Nav } from './KioskUI'
 import { formatPhone } from './hangul'
-import type { PatientData, Step } from './hangul'
+import type { CitizenData, Step } from './hangul'
 
 export interface StepProps {
-  data: PatientData
-  setData: React.Dispatch<React.SetStateAction<PatientData>>
+  data: CitizenData
+  setData: React.Dispatch<React.SetStateAction<CitizenData>>
   go: (s: Step) => void
   onFinish?: () => void
 }
 
-const handleNumpadLogic = (field: 'dob' | 'phone', val: string, max: number, minGuard: number, setData: React.Dispatch<React.SetStateAction<PatientData>>) => {
+const handleNumpadLogic = (field: 'dob' | 'phone', val: string, max: number, minGuard: number, setData: React.Dispatch<React.SetStateAction<CitizenData>>) => {
   setData(prev => {
     const cur = prev[field].replace(/\D/g, '')
     if (val === '지우기') return cur.length <= minGuard ? prev : { ...prev, [field]: cur.slice(0, -1) }
@@ -41,7 +41,7 @@ export function StepStart({ go }: Pick<StepProps, 'go'>) {
         </div>
         <div className="text-center">
           <h1 className="text-4xl font-black tracking-tight text-slate-800 mb-3">수어 통역 시스템</h1>
-          <p className="text-slate-500 text-sm font-medium">환자 접수 키오스크</p>
+          <p className="text-slate-500 text-sm font-medium">민원인 접수 키오스크</p>
         </div>
         <button 
           onClick={() => go('name')} 
@@ -53,7 +53,7 @@ export function StepStart({ go }: Pick<StepProps, 'go'>) {
             </svg>
           </div>
           <div className="text-left text-white">
-            <div className="text-xl font-black">진료 접수하기</div>
+            <div className="text-xl font-black">민원 상담 접수하기</div>
             <div className="text-sm font-semibold opacity-90 mt-0.5">개인정보 입력 후 대기실로 이동합니다</div>
           </div>
         </button>
@@ -157,7 +157,7 @@ export function StepConfirm({ data, go, onFinish }: StepProps) {
             </div>
           ))}
         </div>
-        <Nav onPrev={() => go('phone')} onNext={onFinish} nextLabel="맞습니다, 진료 시작하기" nextGreen />
+        <Nav onPrev={() => go('phone')} onNext={onFinish} nextLabel="맞습니다, 상담 시작하기" nextGreen />
       </div>
     </div>
   )
@@ -172,8 +172,8 @@ export function StepWaiting({ data }: StepProps) {
         <svg className="w-10 h-10" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" strokeWidth="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
       </div>
       <h2 className="text-3xl font-black text-slate-800 mb-2">{data.name}님, 환영합니다</h2>
-      <p className="text-slate-500 text-sm font-medium">의사 선생님이 곧 입장할 예정입니다</p>
-      <div className="mt-8 px-5 py-2.5 rounded-full bg-emerald-50 border border-emerald-100 text-emerald-600 font-bold text-sm">의사 대기실에 알림 전송됨</div>
+      <p className="text-slate-500 text-sm font-medium">상담원이 곧 입장할 예정입니다</p>
+      <div className="mt-8 px-5 py-2.5 rounded-full bg-emerald-50 border border-emerald-100 text-emerald-600 font-bold text-sm">상담원 대기실에 알림 전송됨</div>
     </div>
   )
 }
