@@ -21,7 +21,39 @@ export interface Prediction {
   /** 손을 놓쳤을 때 허용하는 최대 프레임 횟수 (이 값을 넘으면 초기화) */
   max_missing_frames?: number
   /** 1등뿐만 아니라 2등, 3등 예측 결과까지 담고 있는 배열 */
-  top_predictions?: Array<{ label: string; confidence: number }>
+  top_predictions?: Array<{ label: string; display_label?: string | null; confidence: number }>
+  display_label?: string | null
+  scenario_mode?: boolean
+  processing_mode?: 'server_mediapipe' | 'client_mediapipe'
+  process_ms?: number
+  client_mediapipe_ms?: number
+  upload_bytes?: number
+  scenario_text?: string
+  scenario?: {
+    word?: {
+      label: string | null
+      display_label?: string | null
+      confidence: number
+      top: Array<{ label: string; display_label?: string | null; confidence: number }>
+    }
+    sentence?: {
+      label: string | null
+      display_label?: string | null
+      confidence: number
+      top: Array<{ label: string; display_label?: string | null; confidence: number }>
+    }
+    scenario_text?: string | null
+    lookup_hit?: boolean
+    lookup_key?: string | null
+    lookup_source?: string | null
+    lookup_score?: number | null
+    fusion_candidates?: Array<{
+      key: string
+      text: string
+      score: number
+      source: string
+    }>
+  }
 }
 
 /**

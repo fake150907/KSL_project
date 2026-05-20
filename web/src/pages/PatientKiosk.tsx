@@ -501,7 +501,12 @@ export default function PatientKiosk({
 
               <div className="relative flex items-stretch gap-2 flex-1">
                 <button
-                  onClick={() => validationDemoScenarios[0] && handleDemoSelect(validationDemoScenarios[0])}
+                  onClick={() => {
+                    const defaultDemo = validationDemoScenarios.find((scenario) =>
+                      scenario.clips.some((clip) => clip.id.startsWith('resident_realz03_')),
+                    ) || validationDemoScenarios[0]
+                    if (defaultDemo) handleDemoSelect(defaultDemo)
+                  }}
                   disabled={sessionEnded}
                   className={`flex-1 flex items-center justify-center py-2.5 text-sm font-black rounded-lg border-2 transition-all active:scale-95 shadow-sm ${
                     sessionEnded ? 'bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed' : isDemoMode ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-slate-900 border-slate-950 text-white hover:bg-slate-800'

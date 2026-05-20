@@ -1,11 +1,9 @@
 ﻿from __future__ import annotations
 
-from dotenv import load_dotenv
-load_dotenv()  # .env 파일을 config import 전에 로드
-
 import io
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -131,7 +129,44 @@ except Exception as exc:
 
 CHECKPOINT_DIR = ROOT_DIR / config.get("paths", {}).get("checkpoints_dir", "outputs/checkpoints")
 MODEL_FILES = {
-    "cnn_gru": CHECKPOINT_DIR / "best_cnngru_3000.pt",
+    # 이전 best_cnngru_3000.pt 폐기됨 (2026-05-20). v7 운영 ckpt 2개만 유지.
+    "word_v2":      CHECKPOINT_DIR / "word_stage2.pt",          # ⭐ 운영 WORD
+    "sentence_v2":  CHECKPOINT_DIR / "sentence_scenario12.pt",  # ⭐ 운영 SENTENCE (demo 12-class)
+}
+
+# ⭐ 시나리오 클래스 indices (운영 시 restricted 마스킹용)
+SCENARIO_SEN_IDS = [
+    "SEN0109", "SEN0110", "SEN0169", "SEN0170", "SEN0175", "SEN0176",
+    "SEN0278", "SEN0279", "SEN0322", "SEN0354", "SEN0355", "SEN1817",
+]
+SCENARIO_SEN_INDICES: list[int] = []
+SCENARIO_WORD_IDS = ["WORD0579", "WORD0602", "WORD1174", "WORD1282",
+                     "WORD2317", "WORD2318", "WORD2492", "WORD2493"]
+SCENARIO_WORD_INDICES: list[int] = []  # load_models에서 label_map 로드 후 채움
+SCENARIO_LOOKUP: dict[str, str] = {}   # load_models에서 scenario_lookup.json 로드 후 채움
+LABEL_DISPLAY_MAP: dict[str, str] = {}
+SINGLE_SENTENCE_MIN_CONFIDENCE = 0.55
+PAIR_MIN_FUSION_SCORE = 0.35
+PAIR_MIN_WORD_CONFIDENCE = 0.20
+PAIR_MIN_SENTENCE_CONFIDENCE = 0.12
+
+# Scenario fusion priors from the 2026-05-20 scenario12 fine-tune report.
+# Unknown WORD scenario classes use the WORD model's overall validation Top-1.
+SCENARIO_DEFAULT_WORD_ACC = 0.9655
+SCENARIO_DEFAULT_SENTENCE_ACC = 0.8722
+SCENARIO_LABEL_ACC: dict[str, float] = {
+    "SEN0109": 1.00,
+    "SEN0110": 0.40,
+    "SEN0169": 1.00,
+    "SEN0170": 0.667,
+    "SEN0175": 1.00,
+    "SEN0176": 0.867,
+    "SEN0278": 0.667,
+    "SEN0279": 1.00,
+    "SEN0322": 0.933,
+    "SEN0354": 0.933,
+    "SEN0355": 1.00,
+    "SEN1817": 1.00,
 }
 
 sequence_models: dict[str, torch.nn.Module] = {}
@@ -173,10 +208,126 @@ def load_label_map(path: Path) -> list[str]:
     return [label for label, _ in sorted(label_map.items(), key=lambda item: int(item[1]))]
 
 
+def load_label_map_for_ckpt(path: Path) -> list[str]:
+    """⭐ ckpt 이름에 'sentence' 포함되면 SEN label_map, 그 외엔 WORD label_map."""
+    name = path.stem.lower()
+    if "scenario12" in name:
+        sen12_map_path = ROOT_DIR / "model_results" / "label_map_sen_scenario12.json"
+        if sen12_map_path.exists():
+            with sen12_map_path.open("r", encoding="utf-8") as f:
+                sen12_map = json.load(f)
+            return [label for label, _ in sorted(sen12_map.items(), key=lambda x: int(x[1]))]
+    if "sentence" in name or "_sen" in name:
+        sen_map_path = ROOT_DIR / "model_results" / "label_map_sen_id_2000.json"
+        if sen_map_path.exists():
+            with sen_map_path.open("r", encoding="utf-8") as f:
+                sen_map = json.load(f)
+            return [label for label, _ in sorted(sen_map.items(), key=lambda x: int(x[1]))]
+    word_map_path = ROOT_DIR / "model_results" / "label_map_word_id_3000.json"
+    if word_map_path.exists():
+        with word_map_path.open("r", encoding="utf-8") as f:
+            word_map = json.load(f)
+        return [label for label, _ in sorted(word_map.items(), key=lambda x: int(x[1]))]
+    return load_label_map(path)
+
+
+def load_label_display_map() -> dict[str, str]:
+    display: dict[str, str] = {}
+    idx_to_label_path = ROOT_DIR / "model_results" / "idx_to_label_3000.json"
+    if idx_to_label_path.exists():
+        try:
+            with idx_to_label_path.open("r", encoding="utf-8") as f:
+                idx_to_label = json.load(f)
+            for value in idx_to_label.values():
+                if isinstance(value, dict):
+                    word_id = str(value.get("word_id") or "").strip()
+                    label = str(value.get("label") or "").strip()
+                    if word_id and label:
+                        display[word_id] = label
+        except Exception as exc:
+            print(f"Failed to load WORD display labels: {exc}")
+    sen_display_path = ROOT_DIR / "model_results" / "idx_to_label_sen_2000.json"
+    if sen_display_path.exists():
+        try:
+            with sen_display_path.open("r", encoding="utf-8") as f:
+                sen_display = json.load(f)
+            for key, value in sen_display.items():
+                if isinstance(value, dict):
+                    sen_id = str(value.get("sen_id") or value.get("label_id") or key).strip()
+                    label = str(value.get("label") or value.get("text") or "").strip()
+                else:
+                    sen_id = str(key).strip()
+                    label = str(value).strip()
+                if sen_id.isdigit():
+                    sen_id = f"SEN{int(sen_id) + 1:04d}"
+                if sen_id and label:
+                    display[sen_id] = label
+        except Exception as exc:
+            print(f"Failed to load SENTENCE display labels: {exc}")
+    sen12_display_path = ROOT_DIR / "model_results" / "idx_to_label_sen_scenario12.json"
+    if sen12_display_path.exists():
+        try:
+            with sen12_display_path.open("r", encoding="utf-8") as f:
+                sen12_display = json.load(f)
+            for key, value in sen12_display.items():
+                if isinstance(value, dict):
+                    sen_id = str(value.get("sen_id") or value.get("label") or key).strip()
+                    label = str(value.get("display") or value.get("text") or "").strip()
+                else:
+                    sen_id = str(key).strip()
+                    label = str(value).strip()
+                if sen_id and label:
+                    display[sen_id] = label
+        except Exception as exc:
+            print(f"Failed to load scenario12 display labels: {exc}")
+    return display
+
+
+def display_label_for(label: str | None) -> str | None:
+    if not label:
+        return None
+    if label.startswith("SEN") and label in SCENARIO_LOOKUP:
+        return SCENARIO_LOOKUP[label]
+    return LABEL_DISPLAY_MAP.get(label, SCENARIO_LOOKUP.get(label, label))
+
+
+def scenario_label_acc(label: str | None) -> float:
+    if not label:
+        return 0.0
+    if label in SCENARIO_LABEL_ACC:
+        return SCENARIO_LABEL_ACC[label]
+    if label.startswith("WORD"):
+        return SCENARIO_DEFAULT_WORD_ACC
+    if label.startswith("SEN"):
+        return SCENARIO_DEFAULT_SENTENCE_ACC
+    return 0.5
+
+
 def load_sequence_checkpoint(path: Path) -> tuple[torch.nn.Module, list[str]]:
     if torch is None or build_sequence_model is None:
         raise RuntimeError("Vision model dependencies are not installed")
     bundle = torch.load(path, map_location="cpu")
+
+    # ⭐ 신규 분기: 피어나 v7 CNNGRUAttn ckpt 형식
+    if isinstance(bundle, dict) and "model_state" in bundle and "model_config" in bundle:
+        try:
+            from src.models.cnngru_attn import CNNGRUAttn
+        except ImportError as exc:
+            raise RuntimeError(f"CNNGRUAttn import failed: {exc}")
+        model = CNNGRUAttn(**bundle["model_config"])
+        model.load_state_dict(bundle["model_state"])
+        model.eval()
+        # frames_to_model_tensor 호환을 위해 input_size 속성 노출
+        try:
+            model.input_size = int(bundle["model_config"].get("input_dim", 225))
+        except Exception:
+            model.input_size = 225
+        if isinstance(bundle.get("labels"), (list, tuple)):
+            labels = [str(label) for label in bundle["labels"]]
+        else:
+            labels = load_label_map_for_ckpt(path)
+        return model, labels
+
     if isinstance(bundle, dict) and "model_state_dict" in bundle:
         state_dict = bundle["model_state_dict"]
         labels = load_label_map(path)
@@ -227,7 +378,7 @@ def load_sequence_checkpoint(path: Path) -> tuple[torch.nn.Module, list[str]]:
 
 
 def load_models() -> None:
-    global sequence_models, sequence_labels, mp_holistic, mp_holistic_instance, mp_drawing
+    global sequence_models, sequence_labels, mp_holistic, mp_holistic_instance, mp_drawing, LABEL_DISPLAY_MAP
 
     if mp is None:
         print("MediaPipe is not installed; /api/predict will return 503")
@@ -235,14 +386,18 @@ def load_models() -> None:
 
     try:
         mp_holistic = mp.solutions.holistic.Holistic
+        # ⭐ v7 §J.4: 학습-추론 옵션 일치 (model_complexity=1, smooth=True, conf=0.3)
         mp_holistic_instance = mp_holistic(
-            model_complexity=0,
-            smooth_landmarks=False,
-            min_detection_confidence=0.2,
-            min_tracking_confidence=0.2,
+            static_image_mode=False,
+            model_complexity=1,            # 0 → 1
+            smooth_landmarks=True,         # False → True
+            enable_segmentation=False,
+            refine_face_landmarks=False,
+            min_detection_confidence=0.3,  # 0.2 → 0.3
+            min_tracking_confidence=0.3,   # 0.2 → 0.3
         )
         mp_drawing = mp.solutions.drawing_utils
-        print("Loaded MediaPipe")
+        print("Loaded MediaPipe (v7 학습-추론 일치 옵션 적용)")
     except Exception as exc:
         print(f"Failed to load MediaPipe: {exc}")
 
@@ -259,6 +414,44 @@ def load_models() -> None:
                 print(f"Loaded {model_key} model from {path}")
         except Exception as exc:
             print(f"Failed to load {model_key} model from {path}: {exc}")
+
+    # ⭐ 기존 프론트 호환: model_type="cnn_gru" / "sequence" 요청도 운영 WORD(word_v2)로 라우팅
+    if "word_v2" in sequence_models:
+        sequence_models["cnn_gru"] = sequence_models["word_v2"]
+        sequence_labels["cnn_gru"] = sequence_labels["word_v2"]
+
+    # ⭐ 시나리오 class indices 계산 (label_map 기반)
+    global SCENARIO_WORD_INDICES, SCENARIO_SEN_INDICES, SCENARIO_LOOKUP
+    word_labels = sequence_labels.get("word_v2") or sequence_labels.get("cnn_gru") or []
+    if word_labels:
+        word_label_to_idx = {label: i for i, label in enumerate(word_labels)}
+        SCENARIO_WORD_INDICES = [word_label_to_idx[w] for w in SCENARIO_WORD_IDS if w in word_label_to_idx]
+        print(f"Scenario WORD indices ({len(SCENARIO_WORD_INDICES)}/{len(SCENARIO_WORD_IDS)}): {SCENARIO_WORD_INDICES}")
+    else:
+        print("Warning: WORD label_map not available, SCENARIO_WORD_INDICES empty")
+
+    sen_labels = sequence_labels.get("sentence_v2") or []
+    if sen_labels:
+        sen_label_to_idx = {label: i for i, label in enumerate(sen_labels)}
+        SCENARIO_SEN_INDICES = [sen_label_to_idx[s] for s in SCENARIO_SEN_IDS if s in sen_label_to_idx]
+        print(f"Scenario SEN indices ({len(SCENARIO_SEN_INDICES)}/{len(SCENARIO_SEN_IDS)}): {SCENARIO_SEN_INDICES}")
+    else:
+        print("Warning: SENTENCE label_map not available, SCENARIO_SEN_INDICES empty")
+
+    # ⭐ scenario_lookup.json 로드
+    lookup_path = Path(__file__).resolve().parent / "inference" / "scenario_lookup.json"
+    if lookup_path.exists():
+        try:
+            with lookup_path.open("r", encoding="utf-8") as f:
+                raw = json.load(f)
+            # 메타키 (_로 시작)는 제외하고 실제 lookup만 추출
+            SCENARIO_LOOKUP = {k: v for k, v in raw.items() if not k.startswith("_")}
+            print(f"Loaded scenario_lookup with {len(SCENARIO_LOOKUP)} entries")
+        except Exception as exc:
+            print(f"Failed to load scenario_lookup: {exc}")
+
+    LABEL_DISPLAY_MAP = load_label_display_map()
+    print(f"Loaded display labels with {len(LABEL_DISPLAY_MAP)} entries")
 
 
 def ensure_models_loaded() -> None:
@@ -306,6 +499,10 @@ def summarize_prediction_history(history: deque, min_count: int = 1) -> tuple[st
 
 def normalize_model_type(model_type: str) -> str:
     aliases = {
+        "word_v2": "word_v2",
+        "sentence_v2": "sentence_v2",
+        "word": "word_v2",
+        "sentence": "sentence_v2",
         "sequence": "cnn_gru",
         "cnn-gru": "cnn_gru",
         "cnn+gru": "cnn_gru",
@@ -319,6 +516,8 @@ def normalize_model_type(model_type: str) -> str:
 
 
 def get_sequence_model_bundle(model_type: str) -> tuple[Any, list[str] | None]:
+    if model_type in sequence_models:
+        return sequence_models.get(model_type), sequence_labels.get(model_type)
     selected = normalize_model_type(model_type)
     if selected not in sequence_models:
         selected = "cnn_gru"
@@ -336,7 +535,14 @@ def top_predictions_from_probs(
         return None, 0.0, []
     pred = int(np.argmax(probs))
     top_idx = np.argsort(probs)[::-1][:top_k]
-    top = [{"label": labels[i], "confidence": float(probs[i])} for i in top_idx]
+    top = [
+        {
+            "label": labels[i],
+            "display_label": display_label_for(labels[i]),
+            "confidence": float(probs[i]),
+        }
+        for i in top_idx
+    ]
     return labels[pred], float(probs[pred]), top
 
 
@@ -412,6 +618,7 @@ def predict_sequence_frames(
     frames: list[np.ndarray],
     temperature: float | None = None,
     use_tta: bool | None = None,
+    restrict_indices: list[int] | None = None,  # ⭐ v7 시나리오 restricted 마스킹용
 ) -> tuple[str | None, float, list[dict[str, float | str]], int]:
     model, labels = get_sequence_model_bundle(model_type)
     if not model or not labels:
@@ -426,6 +633,13 @@ def predict_sequence_frames(
         for variant in variants:
             tensor = frames_to_model_tensor(model_type, variant)
             logits = model(torch.tensor(tensor[None, ...], dtype=torch.float32))[0].numpy()
+            # ⭐ Restricted 마스킹: 시나리오 class만 비교 (v7 핵심)
+            if restrict_indices:
+                mask = np.full_like(logits, -np.inf)
+                for idx in restrict_indices:
+                    if 0 <= idx < logits.shape[0]:
+                        mask[idx] = 0.0
+                logits = logits + mask
             probs_list.append(softmax(logits / temp))
 
     if not probs_list:
@@ -433,6 +647,273 @@ def predict_sequence_frames(
     avg_probs = np.mean(np.stack(probs_list, axis=0), axis=0)
     label, conf, top = top_predictions_from_probs(avg_probs, labels)
     return label, conf, top, len(probs_list)
+
+
+def predict_dual_scenario(
+    frames: list[np.ndarray],
+    temperature: float | None = None,
+    use_tta: bool | None = None,
+) -> dict[str, Any]:
+    """⭐ v7 운영: WORD + SENTENCE 병렬 추론 + 시나리오 restricted Top-3 + lookup.
+
+    반환:
+      {
+        "word":     {"label": "WORD0579", "confidence": 0.78, "top": [...]},
+        "sentence": {"label": "SEN0322",  "confidence": 0.85, "top": [...]},
+        "scenario_text": "복지카드를 잃어버렸어요",
+        "lookup_hit": True,
+      }
+    """
+    out: dict[str, Any] = {}
+
+    # WORD
+    if "word_v2" in sequence_models and SCENARIO_WORD_INDICES:
+        w_label, w_conf, w_top, _ = predict_sequence_frames(
+            "word_v2", frames, temperature=temperature, use_tta=use_tta,
+            restrict_indices=SCENARIO_WORD_INDICES,
+        )
+        out["word"] = {
+            "label": w_label,
+            "display_label": display_label_for(w_label),
+            "confidence": w_conf,
+            "acc_prior": scenario_label_acc(w_label),
+            "top": w_top,
+        }
+    else:
+        out["word"] = {"label": None, "display_label": None, "confidence": 0.0, "acc_prior": 0.0, "top": []}
+
+    # SENTENCE
+    if "sentence_v2" in sequence_models and SCENARIO_SEN_INDICES:
+        s_label, s_conf, s_top, _ = predict_sequence_frames(
+            "sentence_v2", frames, temperature=temperature, use_tta=use_tta,
+            restrict_indices=SCENARIO_SEN_INDICES,
+        )
+        out["sentence"] = {
+            "label": s_label,
+            "display_label": display_label_for(s_label),
+            "confidence": s_conf,
+            "acc_prior": scenario_label_acc(s_label),
+            "top": s_top,
+        }
+    else:
+        out["sentence"] = {"label": None, "display_label": None, "confidence": 0.0, "acc_prior": 0.0, "top": []}
+
+    word_candidates = [
+        item for item in (out["word"].get("top") or [])
+        if item.get("label")
+    ] or [
+        {
+            "label": out["word"]["label"],
+            "display_label": out["word"].get("display_label"),
+            "confidence": out["word"]["confidence"],
+            "acc_prior": out["word"].get("acc_prior", 0.0),
+        }
+    ]
+    sentence_candidates = [
+        item for item in (out["sentence"].get("top") or [])
+        if item.get("label")
+    ] or [
+        {
+            "label": out["sentence"]["label"],
+            "display_label": out["sentence"].get("display_label"),
+            "confidence": out["sentence"]["confidence"],
+            "acc_prior": out["sentence"].get("acc_prior", 0.0),
+        }
+    ]
+
+    lookup_candidates: list[dict[str, Any]] = []
+    for word_item in word_candidates[:3]:
+        w_label = str(word_item.get("label") or "")
+        if not w_label:
+            continue
+        w_conf = float(word_item.get("confidence") or 0.0)
+        w_acc = scenario_label_acc(w_label)
+        word_item["acc_prior"] = w_acc
+        for sentence_item in sentence_candidates[:3]:
+            s_label = str(sentence_item.get("label") or "")
+            if not s_label:
+                continue
+            s_conf = float(sentence_item.get("confidence") or 0.0)
+            s_acc = scenario_label_acc(s_label)
+            sentence_item["acc_prior"] = s_acc
+            for key in (f"{s_label}+{w_label}", f"{w_label}+{s_label}"):
+                if key in SCENARIO_LOOKUP:
+                    lookup_candidates.append({
+                        "key": key,
+                        "text": SCENARIO_LOOKUP[key],
+                        "score": round(((w_conf * w_acc) * (s_conf * s_acc)) ** 0.5, 6),
+                        "source": "word_sentence_pair",
+                        "word": word_item,
+                        "sentence": sentence_item,
+                    })
+                    break
+
+    for left_index, left_item in enumerate(word_candidates[:3]):
+        left_label = str(left_item.get("label") or "")
+        if not left_label:
+            continue
+        left_conf = float(left_item.get("confidence") or 0.0)
+        left_acc = scenario_label_acc(left_label)
+        left_item["acc_prior"] = left_acc
+        for right_item in word_candidates[left_index + 1:3]:
+            right_label = str(right_item.get("label") or "")
+            if not right_label or right_label == left_label:
+                continue
+            right_conf = float(right_item.get("confidence") or 0.0)
+            right_acc = scenario_label_acc(right_label)
+            right_item["acc_prior"] = right_acc
+            for key in (f"{left_label}+{right_label}", f"{right_label}+{left_label}"):
+                if key in SCENARIO_LOOKUP:
+                    lookup_candidates.append({
+                        "key": key,
+                        "text": SCENARIO_LOOKUP[key],
+                        "score": round(((left_conf * left_acc) * (right_conf * right_acc)) ** 0.5, 6),
+                        "source": "word_word_pair",
+                        "word": left_item,
+                        "word_secondary": right_item,
+                    })
+                    break
+
+    for source, items in (("single_sentence", sentence_candidates[:3]), ("single_word", word_candidates[:3])):
+        for item in items:
+            label = str(item.get("label") or "")
+            if label in SCENARIO_LOOKUP:
+                conf = float(item.get("confidence") or 0.0)
+                if source == "single_sentence" and conf < SINGLE_SENTENCE_MIN_CONFIDENCE:
+                    continue
+                acc = scenario_label_acc(label)
+                item["acc_prior"] = acc
+                lookup_candidates.append({
+                    "key": label,
+                    "text": SCENARIO_LOOKUP[label],
+                    "score": round(conf * acc, 6),
+                    "source": source,
+                    "word": item if source == "single_word" else None,
+                    "sentence": item if source == "single_sentence" else None,
+                })
+
+    lookup_candidates.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
+    best_sentence_single = next(
+        (
+            item for item in lookup_candidates
+            if item.get("source") == "single_sentence"
+            and float(item.get("score") or 0.0) >= 0.20
+        ),
+        None,
+    )
+    best_word_single = next(
+        (item for item in lookup_candidates if item.get("source") == "single_word"),
+        None,
+    )
+    if best_sentence_single and best_word_single:
+        sentence_score = float(best_sentence_single.get("score") or 0.0)
+        word_score = float(best_word_single.get("score") or 0.0)
+        raw_word_label = str((best_word_single.get("word") or {}).get("label") or "")
+        if raw_word_label in SCENARIO_WORD_IDS and word_score < 0.75 and sentence_score >= word_score * 0.35:
+            lookup_candidates = [
+                best_sentence_single,
+                *[item for item in lookup_candidates if item is not best_sentence_single],
+            ]
+    pair_candidates = [
+        item for item in lookup_candidates
+        if item.get("source") in {"word_sentence_pair", "word_word_pair"}
+    ]
+    if pair_candidates:
+        eligible_pairs = []
+        for item in pair_candidates:
+            score = float(item.get("score") or 0.0)
+            word_conf = float((item.get("word") or {}).get("confidence") or 0.0)
+            if item.get("source") == "word_word_pair":
+                second_conf = float((item.get("word_secondary") or {}).get("confidence") or 0.0)
+                is_eligible = (
+                    score >= PAIR_MIN_FUSION_SCORE
+                    and word_conf >= PAIR_MIN_WORD_CONFIDENCE
+                    and second_conf >= PAIR_MIN_WORD_CONFIDENCE
+                )
+            else:
+                second_conf = float((item.get("sentence") or {}).get("confidence") or 0.0)
+                is_eligible = (
+                    score >= PAIR_MIN_FUSION_SCORE
+                    and word_conf >= PAIR_MIN_WORD_CONFIDENCE
+                    and second_conf >= PAIR_MIN_SENTENCE_CONFIDENCE
+                )
+            if is_eligible:
+                eligible_pairs.append(item)
+        best_pair = eligible_pairs[0] if eligible_pairs else None
+    else:
+        best_pair = None
+
+    if best_pair:
+        best_pair_score = float(best_pair.get("score") or 0.0)
+        pair_word_conf = float((best_pair.get("word") or {}).get("confidence") or 0.0)
+        pair_sentence_conf = float((best_pair.get("sentence") or {}).get("confidence") or 0.0)
+        pair_word_secondary_conf = float((best_pair.get("word_secondary") or {}).get("confidence") or 0.0)
+        best_pair["rule"] = {
+            "fusion_score": best_pair_score,
+            "min_fusion_score": PAIR_MIN_FUSION_SCORE,
+            "word_confidence": pair_word_conf,
+            "min_word_confidence": PAIR_MIN_WORD_CONFIDENCE,
+            "sentence_confidence": pair_sentence_conf,
+            "min_sentence_confidence": PAIR_MIN_SENTENCE_CONFIDENCE,
+            "word_secondary_confidence": pair_word_secondary_conf,
+        }
+        lookup_candidates = [
+            best_pair,
+            *[item for item in lookup_candidates if item is not best_pair],
+        ]
+    out["fusion_candidates"] = lookup_candidates[:5]
+    if lookup_candidates:
+        best = lookup_candidates[0]
+        out["scenario_text"] = best["text"]
+        out["lookup_hit"] = True
+        out["lookup_key"] = best["key"]
+        out["lookup_source"] = best["source"]
+        out["lookup_score"] = best["score"]
+    else:
+        out["scenario_text"] = None
+        out["lookup_hit"] = False
+
+    return out
+
+
+def landmarks_payload_to_frame(landmarks: dict[str, Any]) -> np.ndarray:
+    if np is None:
+        raise RuntimeError("NumPy is not installed")
+
+    layout = [
+        ("pose", 33),
+        ("left_hand", 21),
+        ("right_hand", 21),
+    ]
+    points: list[list[float]] = []
+    for key, expected_count in layout:
+        raw_points = landmarks.get(key) if isinstance(landmarks, dict) else None
+        if not isinstance(raw_points, list):
+            raw_points = []
+        for idx in range(expected_count):
+            raw_point = raw_points[idx] if idx < len(raw_points) else None
+            if isinstance(raw_point, list):
+                xyz = [float(raw_point[i] or 0.0) if i < len(raw_point) else 0.0 for i in range(3)]
+            elif isinstance(raw_point, dict):
+                xyz = [float(raw_point.get(axis, 0.0) or 0.0) for axis in ("x", "y", "z")]
+            else:
+                xyz = [0.0, 0.0, 0.0]
+            points.append(xyz)
+    return np.asarray(points, dtype=np.float32)
+
+
+def landmarks_have_points(points: Any) -> bool:
+    if not isinstance(points, list):
+        return False
+    for point in points:
+        if isinstance(point, list) and any(abs(float(value or 0.0)) > 1e-9 for value in point[:2]):
+            return True
+        if isinstance(point, dict) and (
+            abs(float(point.get("x", 0.0) or 0.0)) > 1e-9
+            or abs(float(point.get("y", 0.0) or 0.0)) > 1e-9
+        ):
+            return True
+    return False
 
 
 def generate_mjpeg_frames(camera_index: int = 0):
@@ -566,6 +1047,7 @@ def root():
 
 @app.route("/api/gloss_to_text", methods=["POST"])
 def api_gloss_to_text():
+    ensure_models_loaded()
     data = request.get_json(force=True, silent=True) or {}
     client_id = str(data.get("client_id") or request.remote_addr or "default")
     now = time.monotonic()
@@ -591,6 +1073,24 @@ def api_gloss_to_text():
         gloss = str(gloss_value).strip()
     if not gloss:
         return jsonify({"error": "gloss field is required"}), 400
+
+    gloss_tokens = [token.strip() for token in re.split(r"\s*\+\s*", gloss) if token.strip()]
+    lookup_candidates: list[str] = []
+    if len(gloss_tokens) >= 2:
+        for left in gloss_tokens:
+            for right in gloss_tokens:
+                if left == right:
+                    continue
+                lookup_candidates.append(f"{left}+{right}")
+    lookup_candidates.extend(gloss_tokens)
+    for key in lookup_candidates:
+        if key in SCENARIO_LOOKUP:
+            return jsonify({
+                "gloss": gloss,
+                "text": SCENARIO_LOOKUP[key],
+                "lookup_hit": True,
+                "lookup_key": key,
+            }), 200
 
     provider = data.get("provider")
     model = data.get("model")
@@ -729,7 +1229,11 @@ def predict():
             "no",
         }
         run_model = request.form.get("run_model", "true").lower() != "false"
-
+        upload_bytes = int(float(request.form.get("upload_bytes", 0) or 0))
+        scenario_mode = request.form.get("scenario_mode", "false").lower() in {"true", "1", "yes", "resident"}
+        demo_video_time_sec = request.form.get("demo_video_time_sec")
+        demo_segment_start_sec = request.form.get("demo_segment_start_sec")
+        demo_finalize_reason = request.form.get("demo_finalize_reason") or request.form.get("live_finalize_reason")
         if force_finalize:
             window = get_session_window(client_id)
             prediction: dict[str, Any] = {
@@ -753,8 +1257,14 @@ def predict():
                 "frame_id": frame_id,
                 "landmark_layout": landmark_layout,
                 "model_type": model_type,
+                "scenario_mode": scenario_mode,
+                "processing_mode": "server_mediapipe",
+                "upload_bytes": upload_bytes,
                 "input_size": None,
                 "processed_size": None,
+                "demo_video_time_sec": demo_video_time_sec,
+                "demo_segment_start_sec": demo_segment_start_sec,
+                "demo_finalize_reason": demo_finalize_reason,
             }
 
             segment_frames = list(window)
@@ -774,12 +1284,23 @@ def predict():
                 )
                 prediction["top_predictions"] = top_predictions
                 prediction["raw_label"] = label
+                prediction["display_label"] = display_label_for(label)
                 prediction["raw_confidence"] = conf
                 prediction["tta_count"] = tta_count
                 prediction["confidence"] = conf
                 prediction["window_filled"] = True
                 prediction["segment_finalized"] = True
                 prediction["segment_frames"] = len(segment_frames)
+
+                # ⭐ v7 운영: 시나리오 dual model 추론 + Top-3 + lookup
+                if scenario_mode and ("word_v2" in sequence_models or "sentence_v2" in sequence_models):
+                    try:
+                        dual = predict_dual_scenario(segment_frames, temperature=temperature, use_tta=use_tta)
+                        prediction["scenario"] = dual
+                        if dual.get("scenario_text"):
+                            prediction["scenario_text"] = dual["scenario_text"]
+                    except Exception as exc:
+                        prediction["scenario_error"] = str(exc)
 
                 if label and conf >= confidence_threshold:
                     prediction["label"] = label
@@ -793,40 +1314,32 @@ def predict():
                 prediction["segment_frames"] = len(segment_frames)
                 prediction["status"] = "수어 구간이 너무 짧아 예측하지 않았습니다."
 
-            top_log = json.dumps(prediction.get("top_predictions", []), ensure_ascii=False)
             process_ms = (time.perf_counter() - request_started_at) * 1000
             prediction["process_ms"] = round(process_ms, 1)
             print(
-                "Prediction: "
+                "ForceFinalize: "
                 f"frame_id={frame_id}, "
+                f"video_time={demo_video_time_sec}, "
+                f"segment_start={demo_segment_start_sec}, "
+                f"reason={demo_finalize_reason}, "
                 f"process_ms={process_ms:.1f}, "
-                "input=None, "
-                "processed=None, "
                 f"label={prediction.get('label')}, "
                 f"conf={prediction.get('confidence'):.2f}, "
                 f"raw={prediction.get('raw_label')}/{prediction.get('raw_confidence')}, "
-                f"has_hand={prediction.get('has_hand')}, "
-                f"has_pose={prediction.get('has_pose')}, "
-                f"window={prediction.get('window_progress')}/{prediction.get('window_size')}, "
                 f"segment_frames={prediction.get('segment_frames')}, "
                 f"min_segment_frames={prediction.get('min_segment_frames')}, "
-                f"sequence_length={prediction.get('sequence_length')}, "
-                f"miss={prediction.get('missing_frames')}/{prediction.get('max_missing_frames')}, "
-                f"window_filled={prediction.get('window_filled')}, "
-                f"run_model={prediction.get('run_model')}, "
-                f"force_finalize={prediction.get('force_finalize')}, "
-                f"temp={prediction.get('temperature')}, "
                 f"tta={prediction.get('tta_count')}, "
-                f"top={top_log}",
+                f"scenario={json.dumps(prediction.get('scenario'), ensure_ascii=False)}, "
+                f"top={json.dumps(prediction.get('top_predictions', []), ensure_ascii=False)}",
                 flush=True,
             )
-            return jsonify({"frame_id": frame_id, "prediction": prediction}), 200
+            return jsonify({"prediction": prediction, "frame_id": frame_id})
 
         frame_file = request.files["frame"]
         image_pil = Image.open(io.BytesIO(frame_file.read())).convert("RGB")
         image_rgb = np.array(image_pil)
         height, width = image_rgb.shape[:2]
-        scale = min(320 / width, 180 / height, 1)
+        scale = min(640 / width, 360 / height, 1)
         if scale < 1:
             image_rgb = cv2.resize(
                 image_rgb,
@@ -866,11 +1379,14 @@ def predict():
             "temperature": temperature,
             "tta_enabled": use_tta,
             "run_model": run_model,
-            "force_finalize": False,
+            "force_finalize": force_finalize,
             "top_predictions": [],
             "frame_id": frame_id,
             "landmark_layout": landmark_layout,
             "model_type": model_type,
+            "scenario_mode": scenario_mode,
+            "processing_mode": "server_mediapipe",
+            "upload_bytes": upload_bytes,
             "input_size": {"width": int(width), "height": int(height)},
             "processed_size": {"width": int(processed_width), "height": int(processed_height)},
         }
@@ -914,12 +1430,23 @@ def predict():
                     )
                     prediction["top_predictions"] = top_predictions
                     prediction["raw_label"] = label
+                    prediction["display_label"] = display_label_for(label)
                     prediction["raw_confidence"] = conf
                     prediction["tta_count"] = tta_count
                     prediction["confidence"] = conf
                     prediction["window_filled"] = True
                     prediction["segment_finalized"] = True
                     prediction["segment_frames"] = len(segment_frames)
+
+                    # ⭐ v7 운영: 시나리오 dual model 추론 + Top-3 + lookup
+                    if scenario_mode and ("word_v2" in sequence_models or "sentence_v2" in sequence_models):
+                        try:
+                            dual = predict_dual_scenario(segment_frames, temperature=temperature, use_tta=use_tta)
+                            prediction["scenario"] = dual
+                            if dual.get("scenario_text"):
+                                prediction["scenario_text"] = dual["scenario_text"]
+                        except Exception as exc:
+                            prediction["scenario_error"] = str(exc)
 
                     if label and conf >= confidence_threshold:
                         prediction["label"] = label
@@ -956,7 +1483,6 @@ def predict():
             f"miss={prediction.get('missing_frames')}/{prediction.get('max_missing_frames')}, "
             f"window_filled={prediction.get('window_filled')}, "
             f"run_model={prediction.get('run_model')}, "
-            f"force_finalize={prediction.get('force_finalize')}, "
             f"temp={prediction.get('temperature')}, "
             f"tta={prediction.get('tta_count')}, "
             f"top={top_log}",
@@ -965,6 +1491,223 @@ def predict():
         return jsonify({"frame_id": frame_id, "prediction": prediction}), 200
     except Exception as exc:
         print(f"Prediction error: {exc}")
+        import traceback
+
+        traceback.print_exc()
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/predict_landmarks", methods=["POST"])
+def predict_landmarks():
+    request_started_at = time.perf_counter()
+    try:
+        ensure_models_loaded()
+        if np is None or torch is None or sequence_to_tensor is None:
+            return jsonify({"error": "Model dependencies are not installed"}), 503
+
+        data = request.get_json(silent=True) or {}
+        force_finalize = str(data.get("force_finalize", "false")).lower() in {"true", "1", "yes"}
+        landmarks = data.get("landmarks") or {}
+        if not force_finalize and not isinstance(landmarks, dict):
+            return jsonify({"error": "landmarks must be an object"}), 400
+
+        model_type = normalize_model_type(str(data.get("model_type", "sequence")))
+        landmark_layout = str(data.get("landmark_layout", "mediapipe_xyz"))
+        if landmark_layout != "mediapipe_xyz":
+            return jsonify({"error": f"Unsupported landmark_layout: {landmark_layout}"}), 400
+
+        client_id = str(data.get("client_id", "default"))
+        frame_id = str(data.get("frame_id", ""))
+        confidence_threshold = float(
+            data.get(
+                "confidence_threshold",
+                config.get("realtime", {}).get("confidence_threshold", 0.35),
+            )
+        )
+        requested_window_size = int(
+            data.get(
+                "window_size",
+                config.get("realtime", {}).get("window_size", config["data"]["sequence_length"]),
+            )
+        )
+        sequence_length = int(config["data"]["sequence_length"])
+        window_size = max(8, min(requested_window_size, sequence_length))
+        stable_min_count = int(data.get("stable_min_count", config.get("realtime", {}).get("stable_min_count", 2)))
+        max_missing_frames = int(data.get("max_missing_frames", config.get("realtime", {}).get("max_missing_frames", 3)))
+        min_segment_frames = int(data.get("min_segment_frames", config.get("realtime", {}).get("min_segment_frames", 8)))
+        temperature = float(data.get("temperature", config.get("realtime", {}).get("temperature", 0.9)))
+        use_tta = str(data.get("tta_enabled", config.get("realtime", {}).get("tta_enabled", True))).lower() not in {
+            "false",
+            "0",
+            "no",
+        }
+        run_model = str(data.get("run_model", "true")).lower() != "false"
+        scenario_mode = str(data.get("scenario_mode", "false")).lower() in {"true", "1", "yes", "resident"}
+        client_mediapipe_ms = data.get("client_mediapipe_ms")
+        client_payload_bytes = int(float(data.get("client_payload_bytes", 0) or 0))
+        demo_video_time_sec = data.get("demo_video_time_sec")
+        demo_segment_start_sec = data.get("demo_segment_start_sec")
+        demo_finalize_reason = data.get("demo_finalize_reason") or data.get("live_finalize_reason")
+
+        window = get_session_window(client_id)
+        prediction: dict[str, Any] = {
+            "label": None,
+            "confidence": 0.0,
+            "has_hand": None if force_finalize else False,
+            "has_pose": None if force_finalize else False,
+            "landmarks": landmarks if isinstance(landmarks, dict) else {"left_hand": [], "right_hand": [], "pose": []},
+            "window_progress": len(window),
+            "window_size": window_size,
+            "missing_frames": get_session_misses(client_id),
+            "max_missing_frames": max_missing_frames,
+            "min_segment_frames": min_segment_frames,
+            "segment_frames": None,
+            "sequence_length": sequence_length,
+            "temperature": temperature,
+            "tta_enabled": use_tta,
+            "run_model": run_model,
+            "force_finalize": force_finalize,
+            "top_predictions": [],
+            "frame_id": frame_id,
+            "landmark_layout": landmark_layout,
+            "model_type": model_type,
+            "scenario_mode": scenario_mode,
+            "processing_mode": "client_mediapipe",
+            "client_mediapipe_ms": client_mediapipe_ms,
+            "upload_bytes": client_payload_bytes,
+            "stable_min_count": stable_min_count,
+        }
+
+        if force_finalize:
+            prediction["demo_video_time_sec"] = demo_video_time_sec
+            prediction["demo_segment_start_sec"] = demo_segment_start_sec
+            prediction["demo_finalize_reason"] = demo_finalize_reason
+            segment_frames = list(window)
+            window.clear()
+            set_session_misses(client_id, 0)
+            memory_predictions.pop(client_id, None)
+            prediction["window_progress"] = 0
+            prediction["segmenting"] = False
+            prediction["missing_frames"] = 0
+
+            if len(segment_frames) >= min_segment_frames:
+                label, conf, top_predictions, tta_count = predict_sequence_frames(
+                    model_type,
+                    segment_frames,
+                    temperature=temperature,
+                    use_tta=use_tta,
+                )
+                prediction["top_predictions"] = top_predictions
+                prediction["raw_label"] = label
+                prediction["display_label"] = display_label_for(label)
+                prediction["raw_confidence"] = conf
+                prediction["tta_count"] = tta_count
+                prediction["confidence"] = conf
+                prediction["window_filled"] = True
+                prediction["segment_finalized"] = True
+                prediction["segment_frames"] = len(segment_frames)
+                # ⭐ v7 운영: 시나리오 dual model 추론 + Top-3 + lookup
+                if scenario_mode and ("word_v2" in sequence_models or "sentence_v2" in sequence_models):
+                    try:
+                        dual = predict_dual_scenario(segment_frames, temperature=temperature, use_tta=use_tta)
+                        prediction["scenario"] = dual
+                        if dual.get("scenario_text"):
+                            prediction["scenario_text"] = dual["scenario_text"]
+                    except Exception as exc:
+                        prediction["scenario_error"] = str(exc)
+                if label and conf >= confidence_threshold:
+                    prediction["label"] = label
+                    prediction["below_threshold"] = False
+                else:
+                    prediction["label"] = None
+                    prediction["below_threshold"] = True
+                    prediction["status"] = "수어 구간은 잡혔지만 신뢰도가 낮습니다."
+            elif segment_frames:
+                prediction["segment_finalized"] = True
+                prediction["segment_frames"] = len(segment_frames)
+                prediction["status"] = "수어 구간이 너무 짧아 예측하지 않았습니다."
+        else:
+            has_hand = landmarks_have_points(landmarks.get("left_hand")) or landmarks_have_points(landmarks.get("right_hand"))
+            has_pose = landmarks_have_points(landmarks.get("pose"))
+            prediction["has_hand"] = has_hand
+            prediction["has_pose"] = has_pose
+
+            if has_hand:
+                set_session_misses(client_id, 0)
+                prediction["missing_frames"] = 0
+                window.append(landmarks_payload_to_frame(landmarks))
+                prediction["window_progress"] = len(window)
+                prediction["window_size"] = window_size
+                prediction["window_filled"] = False
+                prediction["segmenting"] = True
+                prediction["status"] = "클라이언트 MediaPipe 랜드마크 수집 중"
+            else:
+                misses = get_session_misses(client_id) + 1
+                set_session_misses(client_id, misses)
+                prediction["missing_frames"] = misses
+                if misses > max_missing_frames:
+                    segment_frames = list(window)
+                    window.clear()
+                    memory_predictions.pop(client_id, None)
+                    prediction["window_progress"] = 0
+                    prediction["segmenting"] = False
+                    if len(segment_frames) >= min_segment_frames:
+                        label, conf, top_predictions, tta_count = predict_sequence_frames(
+                            model_type,
+                            segment_frames,
+                            temperature=temperature,
+                            use_tta=use_tta,
+                        )
+                        prediction["top_predictions"] = top_predictions
+                        prediction["raw_label"] = label
+                        prediction["display_label"] = display_label_for(label)
+                        prediction["raw_confidence"] = conf
+                        prediction["tta_count"] = tta_count
+                        prediction["confidence"] = conf
+                        prediction["window_filled"] = True
+                        prediction["segment_finalized"] = True
+                        prediction["segment_frames"] = len(segment_frames)
+                        # ⭐ v7 운영: 시나리오 dual model 추론 + Top-3 + lookup
+                        if scenario_mode and ("word_v2" in sequence_models or "sentence_v2" in sequence_models):
+                            try:
+                                dual = predict_dual_scenario(segment_frames, temperature=temperature, use_tta=use_tta)
+                                prediction["scenario"] = dual
+                                if dual.get("scenario_text"):
+                                    prediction["scenario_text"] = dual["scenario_text"]
+                            except Exception as exc:
+                                prediction["scenario_error"] = str(exc)
+                        if label and conf >= confidence_threshold:
+                            prediction["label"] = label
+                            prediction["below_threshold"] = False
+                        else:
+                            prediction["label"] = None
+                            prediction["below_threshold"] = True
+                            prediction["status"] = "수어 구간은 잡혔지만 신뢰도가 낮습니다."
+                    elif segment_frames:
+                        prediction["segment_finalized"] = True
+                        prediction["segment_frames"] = len(segment_frames)
+                        prediction["status"] = "수어 구간이 너무 짧아 예측하지 않았습니다."
+                else:
+                    prediction["window_progress"] = len(window)
+
+        process_ms = (time.perf_counter() - request_started_at) * 1000
+        prediction["process_ms"] = round(process_ms, 1)
+        print(
+            "ClientMediaPipe: "
+            f"frame_id={frame_id}, "
+            f"process_ms={process_ms:.1f}, "
+            f"label={prediction.get('label')}, "
+            f"conf={prediction.get('confidence'):.2f}, "
+            f"has_hand={prediction.get('has_hand')}, "
+            f"has_pose={prediction.get('has_pose')}, "
+            f"window={prediction.get('window_progress')}/{prediction.get('window_size')}, "
+            f"segment_frames={prediction.get('segment_frames')}, "
+            f"force_finalize={force_finalize}",
+            flush=True,
+        )
+        return jsonify({"frame_id": frame_id, "prediction": prediction}), 200
+    except Exception as exc:
+        print(f"Client MediaPipe prediction error: {exc}")
         import traceback
 
         traceback.print_exc()
