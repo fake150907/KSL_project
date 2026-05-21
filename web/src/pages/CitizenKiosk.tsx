@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from 'react'
+﻿import { useRef, useEffect, useState, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import type { ChatMessage as ChatMessageType } from '../types'
 import VideoFeed from '../components/VideoFeed'
@@ -20,7 +20,7 @@ export default function CitizenKiosk({
   messages,
   onNewMessage,
   onSessionReset,
-  roomLabel = '상담실 3번',
+  roomLabel = '3번 창구',
   sessionEnded = false,
   citizenName = '민원인',
   citizenPhone = '01000000000',
@@ -28,11 +28,20 @@ export default function CitizenKiosk({
   const navigate = useNavigate()
   const location = useLocation()
   const navState = location.state as { citizenData?: { name: string, phone: string } } | null
-  
-  const actualCitizenName = navState?.citizenData?.name || citizenName
-  const actualCitizenPhone = navState?.citizenData?.phone || citizenPhone
+  const storedCitizenData = (() => {
+    try {
+      return JSON.parse(sessionStorage.getItem('current_citizen_data') || 'null') as { name?: string; phone?: string } | null
+    } catch {
+      return null
+    }
+  })()
+  const activeCitizenData = navState?.citizenData || storedCitizenData
+
+  const actualCitizenName = activeCitizenData?.name || citizenName
+  const actualCitizenPhone = activeCitizenData?.phone || citizenPhone
 
   const chatEndRef = useRef<HTMLDivElement>(null)
+  const staffChatScrollRef = useRef<HTMLDivElement>(null)
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
   
   const [isWaitingForAgent, setIsWaitingForAgent] = useState(sessionEnded)
@@ -42,6 +51,7 @@ export default function CitizenKiosk({
   const [cachedSummary, setCachedSummary] = useState('')
   const [showDemoList, setShowDemoList] = useState(false)
   const [predictionLog, setPredictionLog] = useState<Array<{ label: string; confidence: number; timestamp: number }>>([])
+  const [agentVoiceActive, setAgentVoiceActive] = useState(false)
 
   const handleNewMessageFromKiosk = useCallback((msg: ChatMessageType) => {
     onNewMessage(msg)                    // 자기 화면 업데이트
@@ -64,6 +74,10 @@ export default function CitizenKiosk({
   useEffect(() => {
     const handleIncomingMessage = (msg: ChatMessageType) => {
       onNewMessage(msg)
+      if (msg.sender === 'agent') {
+        setAgentVoiceActive(true)
+        window.setTimeout(() => setAgentVoiceActive(false), 2800)
+      }
     }
     socket.on('chat_message', handleIncomingMessage)
     return () => {
@@ -72,8 +86,19 @@ export default function CitizenKiosk({
   }, [onNewMessage])
 
   useEffect(() => {
-    const parent = chatEndRef.current?.parentElement;
-    if (parent) parent.scrollTo({ top: parent.scrollHeight, behavior: 'smooth' });
+    const handleAgentVoiceStatus = (payload: { active?: boolean }) => {
+      setAgentVoiceActive(!!payload?.active)
+    }
+
+    socket.on('agent_voice_status', handleAgentVoiceStatus)
+    return () => {
+      socket.off('agent_voice_status', handleAgentVoiceStatus)
+    }
+  }, [])
+
+  useEffect(() => {
+    const scrollEl = staffChatScrollRef.current
+    if (scrollEl) scrollEl.scrollTo({ top: scrollEl.scrollHeight, behavior: 'smooth' })
   }, [messages])
 
   useEffect(() => {
@@ -417,6 +442,63 @@ export default function CitizenKiosk({
     void startDemoScenario(scenario)
   }
 
+  const citizenStep = isRunning ? (isRecognized ? 3 : currentPrediction?.window_filled ? 2 : 1) : 0
+  const agentStep = agentVoiceActive ? 1 : 0
+  const latestGlossCaption = [...messages]
+    .reverse()
+    .find((message) =>
+      message.sender === 'citizen'
+      && ['수어 문장 변환', '데모 문장 변환', '수어 글로스', '데모 글로스'].includes(message.label || '')
+    )?.text || ''
+  const latestCitizenCaption = latestGlossCaption || [...messages].reverse().find((message) => message.sender === 'citizen')?.text || ''
+
+  const renderStepLane = (tone: 'blue' | 'green', label: string, activeStep: number) => {
+    const activeClass = tone === 'blue'
+      ? 'border-blue-600 bg-blue-600 text-white shadow-[0_0_16px_rgba(37,99,235,0.35)]'
+      : 'border-emerald-600 bg-emerald-600 text-white shadow-[0_0_16px_rgba(5,150,105,0.35)]'
+    const labelClass = tone === 'blue' ? 'text-blue-700' : 'text-emerald-700'
+    const steps = ['입력', '번역 중', '출력']
+
+    return (
+      <div className="rounded-lg border border-slate-200 bg-white px-3 py-3">
+        <p className={`mb-3 text-center text-xs font-black ${labelClass}`}>{label}</p>
+        <div className="flex items-center justify-between gap-2">
+          {steps.map((step, index) => (
+            <div key={step} className="flex flex-1 items-center gap-2">
+              <div className="flex min-w-0 flex-1 flex-col items-center gap-1.5">
+                <span className={`flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-black transition-all duration-300 ${activeStep === index + 1 ? activeClass : 'border-slate-300 bg-white text-slate-700'}`}>
+                  {index + 1}
+                </span>
+                <span className="text-[11px] font-bold text-slate-600">{step}</span>
+              </div>
+              {index < steps.length - 1 && (
+                <svg className="h-5 w-5 shrink-0 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                  <path d="M5 12h14" />
+                  <path d="m13 6 6 6-6 6" />
+                </svg>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  const VoiceBars = ({ active }: { active: boolean }) => (
+    <div className="flex h-10 w-full max-w-[300px] items-center justify-center gap-1" aria-label="직원 음성 출력 상태">
+      {Array.from({ length: 42 }).map((_, index) => (
+        <span
+          key={index}
+          className={`w-1 rounded-full transition-all duration-300 ${active ? 'animate-pulse bg-emerald-500/80' : 'bg-slate-300'}`}
+          style={{
+            height: active ? `${9 + ((index * 11) % 28)}px` : `${6 + ((index * 5) % 10)}px`,
+            animationDelay: `${index * 28}ms`,
+          }}
+        />
+      ))}
+    </div>
+  )
+
   return (
     <div className="fixed inset-0 bg-slate-100 flex flex-col overflow-hidden">
       
@@ -450,128 +532,116 @@ export default function CitizenKiosk({
         </div>
       </header>
 
-      <div className="flex flex-row flex-1 min-h-0 overflow-hidden">
-        <div className="w-[480px] shrink-0 flex flex-col border-r border-slate-200 bg-white overflow-hidden">
-          <div className="flex-1 min-h-0 p-3 bg-slate-50 flex justify-center items-center">
-            <div className="w-full h-full rounded-2xl overflow-hidden shadow-inner border-4 border-white bg-black relative">
-              <VideoFeed videoRef={videoRef} canvasRef={canvasRef} landmarkCanvasRef={landmarkCanvasRef} isRunning={isRunning} currentPrediction={currentPrediction} predictionStatus={predictionStatus} onVideoEnded={handleDemoVideoEnded} camFps={camFps} sendFps={sendFps} />
+      <div className="flex-1 min-h-0 overflow-y-auto bg-slate-100 p-3 md:p-5">
+        <div className="mx-auto grid min-h-full w-full max-w-[1280px] grid-cols-1 gap-3 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(300px,1fr)_minmax(260px,0.78fr)_minmax(300px,1fr)]">
+          <section className="order-1 flex min-h-[560px] flex-col overflow-hidden rounded-lg border-2 border-blue-600 bg-white shadow-sm lg:h-full lg:min-h-0">
+            <div className="bg-blue-700 px-4 py-3 text-center text-base font-black text-white">민원인 (수어 입력)</div>
+            <div className="min-h-0 flex-1 bg-slate-100 p-3">
+              <div className="relative h-full min-h-[270px] overflow-hidden rounded-lg border border-slate-200 bg-black">
+                <VideoFeed videoRef={videoRef} canvasRef={canvasRef} landmarkCanvasRef={landmarkCanvasRef} isRunning={isRunning} currentPrediction={currentPrediction} predictionStatus={predictionStatus} onVideoEnded={handleDemoVideoEnded} camFps={camFps} sendFps={sendFps} />
+              </div>
             </div>
-          </div>
-
-          <div className={`flex shrink-0 items-center px-4 py-2.5 gap-3 border-t border-slate-100 transition-colors duration-300 ${isRunning ? isRecognized ? 'bg-emerald-50' : 'bg-blue-50' : 'bg-white'}`}>
-            {isRunning ? (
-              <>
-                <div className={`w-9 h-9 rounded-lg flex shrink-0 items-center justify-center ${isRecognized ? 'bg-emerald-100' : 'bg-blue-100'}`}>
-                  <span className={`rounded-full shrink-0 w-2.5 h-2.5 ${isRecognized ? 'bg-emerald-500' : 'bg-blue-500'}`} />
-                </div>
-                <div className="flex flex-col min-w-0">
-                  <span className={`text-xs font-bold ${isRecognized ? 'text-emerald-600' : 'text-blue-600'}`}>{isRecognized ? '수어 인식 성공' : '실시간 인식 중'}</span>
-                  <span className="text-sm font-black text-slate-800 leading-tight truncate">{bannerLabel || '손을 카메라에 맞춰 보여주세요'}</span>
-                </div>
-                <div className="ml-auto hidden min-w-0 flex-col items-end gap-1 xl:flex">
-                  <span className="text-[10px] font-black text-slate-400">최근 예측</span>
-                  <div className="flex max-w-[180px] flex-wrap justify-end gap-1">
-                    {predictionLog.length > 0 ? predictionLog.map((item) => (
-                      <span key={`${item.timestamp}-${item.label}`} className="rounded-md border border-white/70 bg-white px-1.5 py-0.5 text-[10px] font-black text-slate-700 shadow-sm">
-                        {item.label}
-                        <span className="ml-1 text-blue-500">{Math.round(item.confidence * 100)}%</span>
-                      </span>
-                    )) : (
-                      <span className="rounded-md bg-white/70 px-1.5 py-0.5 text-[10px] font-bold text-slate-400">없음</span>
-                    )}
+            <div className={`flex shrink-0 items-center gap-3 border-t border-slate-200 px-4 py-3 transition-colors duration-300 ${isRunning ? isRecognized ? 'bg-emerald-50' : 'bg-blue-50' : 'bg-white'}`}>
+              {isRunning ? (
+                <>
+                  <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${isRecognized ? 'bg-emerald-100' : 'bg-blue-100'}`}>
+                    <span className={`h-2.5 w-2.5 rounded-full ${isRecognized ? 'bg-emerald-500' : 'bg-blue-500'}`} />
                   </div>
+                  <div className="flex min-w-0 flex-col">
+                    <span className={`text-xs font-bold ${isRecognized ? 'text-emerald-600' : 'text-blue-600'}`}>{isRecognized ? '수어 인식 성공' : '실시간 인식 중'}</span>
+                    <span className="truncate text-sm font-black leading-tight text-slate-800">{bannerLabel || '손을 카메라에 맞춰 보여주세요.'}</span>
+                  </div>
+                </>
+              ) : (
+                <span className="mx-auto text-center text-xs font-bold italic text-slate-400">카메라 시작 버튼을 누르면 수어 번역을 시작합니다.</span>
+              )}
+            </div>
+            <div className="border-t border-slate-200 bg-white p-4">
+              <span className="mb-2 block text-xs font-black text-blue-700">실시간 자막</span>
+              <div className={`h-[116px] overflow-y-scroll overscroll-contain rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-2xl font-black leading-snug ${latestCitizenCaption ? 'text-slate-900' : 'text-slate-400'}`}>
+                {latestCitizenCaption || '수어를 인식하면 변환 문장이 표시됩니다.'}
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-col gap-2 border-t border-slate-100 bg-white px-4 py-3">
+              <div className="flex gap-2">
+                <button onClick={isRunning ? stopCamera : startCamera} disabled={sessionEnded} className={`flex-1 rounded-lg border-2 py-2.5 text-sm font-black shadow-sm transition-all active:scale-95 ${sessionEnded ? 'bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed' : isRunning ? 'bg-red-50 border-red-200 text-red-600 hover:bg-red-100' : 'bg-blue-600 border-blue-700 text-white hover:bg-blue-700 shadow-blue-100'}`}>
+                  {sessionEnded ? '상담 종료됨' : isRunning ? '카메라 중지' : '카메라 시작'}
+                </button>
+                <div className="relative flex flex-1 items-stretch gap-2">
+                  <button onClick={() => validationDemoScenarios[0] && handleDemoSelect(validationDemoScenarios[0])} disabled={sessionEnded} className={`flex flex-1 items-center justify-center rounded-lg border-2 py-2.5 text-sm font-black shadow-sm transition-all active:scale-95 ${sessionEnded ? 'bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed' : isDemoMode ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-slate-900 border-slate-950 text-white hover:bg-slate-800'}`}>
+                    {isDemoMode ? `데모: ${activeDemoLabel}` : '데모 시연'}
+                  </button>
+                  <button type="button" onClick={() => setShowDemoList((prev) => !prev)} disabled={sessionEnded} className="flex w-10 items-center justify-center rounded-lg border-2 border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 active:scale-95 disabled:text-slate-300">
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m6 9 6 6 6-6" /></svg>
+                  </button>
+                  {showDemoList && (
+                    <div className="absolute bottom-full left-0 right-0 z-50 mb-1 overflow-hidden rounded-lg border-2 border-slate-200 bg-white shadow-2xl">
+                      {validationDemoScenarios.map((scenario, index) => (
+                        <button key={scenario.displayText} onClick={() => handleDemoSelect(scenario)} className="flex w-full items-center gap-2 border-b border-slate-100 px-3 py-2.5 text-left text-sm font-black text-slate-800 last:border-b-0 hover:bg-blue-50">
+                          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-600 text-[10px] text-white">{index + 1}</span>
+                          <span className="truncate">{scenario.displayText}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </>
-            ) : (
-              <span className="text-xs text-slate-400 font-bold mx-auto italic text-center">카메라 시작 버튼을 누르면 수어 번역이 시작됩니다</span>
-            )}
-          </div>
+              </div>
+              {videoDevices.length > 1 && (
+                <select value={selectedDeviceId} onChange={(e) => setSelectedDeviceId(e.target.value)} className="w-full rounded-lg border-2 border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-blue-500">
+                  {videoDevices.map((d, i) => <option key={d.deviceId} value={d.deviceId}>{d.label || `카메라 ${i + 1}`}</option>)}
+                </select>
+              )}
+            </div>
+          </section>
 
-          <div className="flex shrink-0 flex-col gap-2 px-4 py-3 border-t border-slate-100 bg-white">
-            <div className="flex gap-2">
-              <button
-                onClick={isRunning ? stopCamera : startCamera}
-                disabled={sessionEnded}
-                className={`flex-1 py-2.5 text-sm font-black rounded-lg border-2 transition-all active:scale-95 shadow-sm ${
-                  sessionEnded ? 'bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed' : isRunning ? 'bg-red-50 border-red-200 text-red-600 hover:bg-red-100' : 'bg-blue-600 border-blue-700 text-white hover:bg-blue-700 shadow-blue-100'
-                }`}
-              >
-                {sessionEnded ? '상담 종료됨' : isRunning ? '카메라 중지' : '카메라 시작'}
+          <section className="order-2 flex min-h-[430px] flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm lg:h-full lg:min-h-0">
+            <div className="border-b border-slate-200 px-4 py-3 text-center text-base font-black text-slate-800">통역 상태</div>
+            <div className="flex flex-1 flex-col justify-center gap-4 px-4 py-5">
+              {renderStepLane('blue', '민원인 수어 입력 흐름', citizenStep)}
+              <div className="flex items-center justify-center gap-4 py-2">
+                <svg className="h-12 w-24 text-blue-600" viewBox="0 0 120 48" fill="none" stroke="currentColor" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round"><path d="M8 15h92"/><path d="m83 3 20 12-20 12"/></svg>
+                <svg className="h-12 w-24 text-emerald-600" viewBox="0 0 120 48" fill="none" stroke="currentColor" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round"><path d="M112 33H20"/><path d="M37 21 17 33l20 12"/></svg>
+              </div>
+              {renderStepLane('green', '직원 음성 출력 흐름', agentStep)}
+              <div className="mt-1 flex items-center justify-center gap-2 text-sm font-bold text-slate-700"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.35)]" />양방향 실시간 통역 중</div>
+            </div>
+            <div className="border-t border-slate-200 px-4 py-3">
+              <button className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-slate-300 bg-slate-50 py-3 text-base font-black text-slate-700">
+                <svg className="h-5 w-5 text-blue-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M16 21v-2a4 4 0 0 0-8 0v2"/><circle cx="12" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg>
+                직원 연결
               </button>
+            </div>
+          </section>
 
-              <div className="relative flex items-stretch gap-2 flex-1">
-                <button
-                  onClick={() => validationDemoScenarios[0] && handleDemoSelect(validationDemoScenarios[0])}
-                  disabled={sessionEnded}
-                  className={`flex-1 flex items-center justify-center py-2.5 text-sm font-black rounded-lg border-2 transition-all active:scale-95 shadow-sm ${
-                    sessionEnded ? 'bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed' : isDemoMode ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-slate-900 border-slate-950 text-white hover:bg-slate-800'
-                  }`}
-                >
-                  {isDemoMode ? `데모: ${activeDemoLabel}` : '데모 시연'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowDemoList((prev) => !prev)}
-                  disabled={sessionEnded}
-                  className="flex w-10 items-center justify-center rounded-lg border-2 border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 active:scale-95 disabled:text-slate-300"
-                >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m6 9 6 6 6-6" /></svg>
-                </button>
-
-                {showDemoList && (
-                  <div className="absolute left-0 right-0 bottom-full mb-1 z-50 overflow-hidden rounded-xl border-2 border-slate-200 bg-white shadow-2xl">
-                    {validationDemoScenarios.map((scenario, index) => (
-                      <button
-                        key={scenario.displayText}
-                        onClick={() => handleDemoSelect(scenario)}
-                        className="flex w-full items-center gap-2 border-b border-slate-100 px-3 py-2.5 text-left text-sm font-black text-slate-800 last:border-b-0 hover:bg-blue-50"
-                      >
-                        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-600 text-white text-[10px]">{index + 1}</span>
-                        <span className="truncate">{scenario.displayText}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
+          <section className="order-3 flex min-h-[430px] flex-col overflow-hidden rounded-lg border-2 border-emerald-600 bg-white shadow-sm lg:h-full lg:min-h-0">
+            <div className="bg-emerald-700 px-4 py-3 text-center text-base font-black text-white">직원 (음성 출력)</div>
+            <div className="flex shrink-0 flex-col items-center justify-center gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4 text-center">
+              <p className={`text-base font-black ${agentVoiceActive ? 'text-emerald-700' : 'text-slate-500'}`}>{agentVoiceActive ? '직원이 음성 출력 중입니다' : '직원 음성 출력 대기 중입니다'}</p>
+              <div className="flex w-full items-center justify-center gap-4">
+                <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-white shadow-lg transition-all ${agentVoiceActive ? 'bg-emerald-600 shadow-emerald-100 scale-105' : 'bg-slate-400 shadow-slate-100'}`}>
+                  <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg>
+                </div>
+                <VoiceBars active={agentVoiceActive} />
               </div>
             </div>
-
-            {videoDevices.length > 1 && (
-              <select value={selectedDeviceId} onChange={(e) => setSelectedDeviceId(e.target.value)} className="w-full py-2 px-3 text-sm font-bold bg-slate-50 border-2 border-slate-200 rounded-lg text-slate-700 outline-none focus:border-blue-500">
-                {videoDevices.map((d, i) => <option key={d.deviceId} value={d.deviceId}>{d.label || `카메라 ${i + 1}`}</option>)}
-              </select>
-            )}
-          </div>
-        </div>
-
-        <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-slate-50/30">
-          <div className="shrink-0 flex items-center justify-between px-6 py-3 border-b border-slate-100 bg-white shadow-sm z-10">
-            <div className="flex items-center gap-2">
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              <span className="text-base font-black text-slate-700">실시간 대화 내역</span>
+            <div ref={staffChatScrollRef} className="min-h-0 flex-1 overflow-y-scroll overscroll-contain bg-white px-4 py-3">
+              {messages.length === 0 ? (
+                <div className="flex h-full min-h-[180px] flex-col items-center justify-center gap-3 text-center opacity-40">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100"><svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+                  <div><p className="text-sm font-black text-slate-600">대화 내역이 없습니다</p><p className="mt-1 text-xs font-medium text-slate-500">상담이 시작되면 대화 내용이 표시됩니다</p></div>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {messages.map((msg) => <ChatMessage key={msg.id} message={msg} />)}
+                  <div ref={chatEndRef} />
+                </div>
+              )}
             </div>
-            <span className="text-xs font-bold text-blue-500 bg-blue-50 px-2 py-0.5 rounded-full">{messages.length}</span>
-          </div>
-          <div className="flex-1 overflow-y-auto flex flex-col gap-3 px-6 py-4">
-            {messages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full gap-3 text-center opacity-40">
-                <div className="w-14 h-14 rounded-full bg-slate-100 flex items-center justify-center">
-                  <svg className="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                </div>
-                <div>
-                  <p className="text-base font-black text-slate-600">대화 내역이 없습니다</p>
-                  <p className="text-xs text-slate-500 mt-1 font-medium">상담이 시작되면 대화 내용이 기록됩니다</p>
-                </div>
-              </div>
-            ) : (
-              messages.map((msg) => <ChatMessage key={msg.id} message={msg} />)
-            )}
-            <div ref={chatEndRef} />
-          </div>
-          <footer className="shrink-0 py-2.5 px-6 border-t border-slate-100 bg-white flex items-center justify-center">
-            <p className="text-xs text-slate-400 font-bold text-center">수어로 증상을 표현해 주세요. 인공지능이 즉시 상담원께 전달합니다.</p>
-          </footer>
+          </section>
         </div>
       </div>
+
+
 
       {showPopup && (
         <div className="absolute inset-0 flex items-center justify-center z-50 bg-slate-900/60 backdrop-blur-sm p-4">

@@ -54,6 +54,7 @@ export default function KioskLaunchScreen() {
 
   const handleFinish = () => {
     setStep('waiting')
+    sessionStorage.setItem('current_citizen_data', JSON.stringify(dataRef.current))
     // socket.io: 민원인 도착 알림 → 서버 → 상담원 대기실
     socket.emit('citizen_arrived', { citizenData: dataRef.current })
   }

@@ -78,10 +78,18 @@ export default function AgentDashboard({
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
 
   const navState = location.state as { citizenData?: { name: string; dob: string; gender: string; phone: string } } | null
-  const citizenName = propCitizenName || navState?.citizenData?.name || '민원인'
-  const citizenDob = propCitizenDob || navState?.citizenData?.dob || '미입력'
-  const citizenGender = propCitizenGender || navState?.citizenData?.gender || '미입력'
-  const citizenPhone = propCitizenPhone || navState?.citizenData?.phone || ''
+  const storedCitizenData = (() => {
+    try {
+      return JSON.parse(sessionStorage.getItem('current_citizen_data') || 'null') as { name?: string; dob?: string; gender?: string; phone?: string } | null
+    } catch {
+      return null
+    }
+  })()
+  const activeCitizenData = navState?.citizenData || storedCitizenData
+  const citizenName = activeCitizenData?.name || propCitizenName || '민원인'
+  const citizenDob = activeCitizenData?.dob || propCitizenDob || '미입력'
+  const citizenGender = activeCitizenData?.gender || propCitizenGender || '미입력'
+  const citizenPhone = activeCitizenData?.phone || propCitizenPhone || ''
 
   const [videoConnected, setVideoConnected] = useState(false)
   const [notes, setNotes] = useState<AgentNote[]>([])
@@ -112,6 +120,10 @@ export default function AgentDashboard({
   useEffect(() => {
     registerRole('agent')
   }, [])
+
+  useEffect(() => {
+    socket.emit('agent_voice_status', { active: isSpeechActive })
+  }, [isSpeechActive])
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -272,7 +284,7 @@ export default function AgentDashboard({
   }
 
   return (
-    <div className="min-h-screen w-full overflow-x-hidden bg-slate-100 text-slate-900">
+    <div className="flex h-screen w-full flex-col overflow-hidden bg-slate-100 text-slate-900">
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="flex flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between md:px-6">
           <div className="min-w-0">
@@ -297,7 +309,7 @@ export default function AgentDashboard({
         </div>
       </header>
 
-      <main className="grid min-w-0 grid-cols-1 gap-3 p-3 md:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.15fr)_minmax(0,0.9fr)]">
+      <main className="grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-3 overflow-hidden p-3 md:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.15fr)_minmax(0,0.9fr)]">
         <section className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white">
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
             <h2 className="text-base font-black">민원인 수어 영상</h2>
@@ -357,7 +369,7 @@ export default function AgentDashboard({
           </div>
         </section>
 
-        <section className="flex min-h-[460px] min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white md:min-h-[540px] xl:min-h-[620px]">
+        <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
             <h2 className="text-base font-black">실시간 통역</h2>
             <span className="flex items-center gap-2 text-xs font-black text-emerald-700">
@@ -376,7 +388,7 @@ export default function AgentDashboard({
             </div>
           </div>
 
-          <div className="min-h-[220px] flex-1 overflow-y-auto px-4 py-5">
+          <div className="min-h-0 flex-1 overflow-y-scroll overscroll-contain px-4 py-5">
             {messages.length === 0 ? (
               <div className="flex h-full items-center justify-center text-center text-sm font-bold text-slate-300">
                 상담이 시작되면 민원인 발화와 상담원 응답이 여기에 기록됩니다.
@@ -394,21 +406,21 @@ export default function AgentDashboard({
             <p className="mt-1 text-sm font-semibold text-slate-500">답변은 민원인 화면에서 수어/문자로 안내됩니다.</p>
           </div>
           <div className="space-y-4 p-4">
-            {isSpeechActive && (
-              <div className="flex h-12 items-end gap-1">
-                {voiceLevels.map((level, index) => (
+            <div className="flex h-12 items-end gap-1">
+              {voiceLevels.map((level, index) => {
+                const displayLevel = isSpeechActive ? level : 0.12
+                return (
                   <div
                     key={index}
                     className="flex-1 rounded-full transition-all"
                     style={{
-                      height: `${Math.round(level * 100)}%`,
-                      minHeight: '10%',
-                      background: level > 0.2 ? VOICE_BAR_COLORS[index % VOICE_BAR_COLORS.length] : '#E2E8F0',
+                      height: `${Math.max(10, Math.round(displayLevel * 100))}%`,
+                      background: isSpeechActive && level > 0.2 ? VOICE_BAR_COLORS[index % VOICE_BAR_COLORS.length] : '#E2E8F0',
                     }}
                   />
-                ))}
-              </div>
-            )}
+                )
+              })}
+            </div>
             <textarea
               value={replyInput}
               onChange={(event) => setReplyInput(event.target.value)}

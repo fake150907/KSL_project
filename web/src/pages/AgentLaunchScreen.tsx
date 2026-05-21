@@ -109,7 +109,10 @@ export default function AgentLaunchScreen({ onSessionReset }: AgentLaunchScreenP
   useEffect(() => {
     const handleCitizenArrived = (payload: { citizenData: { name: string; dob: string; gender: string; phone: string } }) => {
       setNotified(true)
-      if (payload?.citizenData) setCitizenData(payload.citizenData)
+      if (payload?.citizenData) {
+        setCitizenData(payload.citizenData)
+        sessionStorage.setItem('current_citizen_data', JSON.stringify(payload.citizenData))
+      }
     }
 
     const handleSessionReset = () => {
@@ -128,9 +131,12 @@ export default function AgentLaunchScreen({ onSessionReset }: AgentLaunchScreenP
   }, [])
 
   const handleEnter = () => {
+    const stored = sessionStorage.getItem('current_citizen_data')
+    const storedCitizenData = stored ? JSON.parse(stored) : null
+    const activeCitizenData = citizenDataRef.current || storedCitizenData
     onSessionReset?.()
     socket.emit('agent_ready')
-    navigate('/agent', { state: { citizenData: citizenDataRef.current } })
+    navigate('/agent', { state: { citizenData: activeCitizenData } })
   }
 
   const handleOpenRecords = () => {

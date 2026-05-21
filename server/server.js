@@ -96,6 +96,10 @@ io.on("connection", (socket) => {
     io.to("agent").emit("consultation_summary_saved", payload);
   });
 
+  socket.on("agent_voice_status", (payload) => {
+    io.to("kiosk").emit("agent_voice_status", payload);
+  });
+
   // ─────────────────────────────────────────
   // WebRTC 시그널링
   // target: 'kiosk' | 'agent' (role 이름)
