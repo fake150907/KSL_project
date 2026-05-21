@@ -73,7 +73,7 @@ export default function AgentDashboard({
 }: AgentDashboardProps) {
   const navigate = useNavigate()
   const location = useLocation()
-  const chatEndRef = useRef<HTMLDivElement>(null)
+  const chatListRef = useRef<HTMLDivElement>(null)
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
 
@@ -114,7 +114,10 @@ export default function AgentDashboard({
   }, [])
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const chatList = chatListRef.current
+    if (!chatList) return
+
+    chatList.scrollTo({ top: chatList.scrollHeight, behavior: 'smooth' })
   }, [messages])
 
   useEffect(() => {
@@ -376,7 +379,7 @@ export default function AgentDashboard({
             </div>
           </div>
 
-          <div className="min-h-[220px] flex-1 overflow-y-auto px-4 py-5">
+          <div ref={chatListRef} className="min-h-[220px] flex-1 overflow-y-auto px-4 py-5">
             {messages.length === 0 ? (
               <div className="flex h-full items-center justify-center text-center text-sm font-bold text-slate-300">
                 상담이 시작되면 민원인 발화와 상담원 응답이 여기에 기록됩니다.
@@ -384,7 +387,6 @@ export default function AgentDashboard({
             ) : (
               messages.map((message) => <ChatMessage key={message.id} message={message} />)
             )}
-            <div ref={chatEndRef} />
           </div>
         </section>
 

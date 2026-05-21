@@ -54,6 +54,7 @@ export default function CitizenKiosk({
     videoDevices, selectedDeviceId, setSelectedDeviceId,
     startCamera, stopCamera, startDemoScenario, handleDemoVideoEnded, getPredictionStatus,
     camFps, sendFps,
+    liveSegmentStatus,
   } = useSignLanguage(handleNewMessageFromKiosk)
 
   // 키오스크 역할 등록
@@ -216,7 +217,7 @@ export default function CitizenKiosk({
   useEffect(() => {
     if (!currentPrediction?.window_filled) return
     const top = currentPrediction.top_predictions?.[0]
-    const label = currentPrediction.label || top?.label
+    const label = currentPrediction.display_label || currentPrediction.label || top?.display_label || top?.label
     const confidence = currentPrediction.confidence || top?.confidence || 0
     if (!label) return
 
@@ -225,7 +226,7 @@ export default function CitizenKiosk({
       if (last && last.label === label && Math.abs(last.confidence - confidence) < 0.001) return prev
       return [{ label, confidence, timestamp: Date.now() }, ...prev].slice(0, 4)
     })
-  }, [currentPrediction?.timestamp, currentPrediction?.window_filled, currentPrediction?.label, currentPrediction?.confidence, currentPrediction?.top_predictions])
+  }, [currentPrediction?.timestamp, currentPrediction?.window_filled, currentPrediction?.label, currentPrediction?.display_label, currentPrediction?.confidence, currentPrediction?.top_predictions])
 
   const predictionStatus = currentPrediction ? getPredictionStatus(currentPrediction) : ''
   const isRecognized = !!currentPrediction?.window_filled && !!currentPrediction?.label && (currentPrediction?.confidence ?? 0) >= 0.30
@@ -454,7 +455,7 @@ export default function CitizenKiosk({
         <div className="w-[480px] shrink-0 flex flex-col border-r border-slate-200 bg-white overflow-hidden">
           <div className="flex-1 min-h-0 p-3 bg-slate-50 flex justify-center items-center">
             <div className="w-full h-full rounded-2xl overflow-hidden shadow-inner border-4 border-white bg-black relative">
-              <VideoFeed videoRef={videoRef} canvasRef={canvasRef} landmarkCanvasRef={landmarkCanvasRef} isRunning={isRunning} currentPrediction={currentPrediction} predictionStatus={predictionStatus} onVideoEnded={handleDemoVideoEnded} camFps={camFps} sendFps={sendFps} />
+              <VideoFeed videoRef={videoRef} canvasRef={canvasRef} landmarkCanvasRef={landmarkCanvasRef} isRunning={isRunning} isDemoMode={isDemoMode} currentPrediction={currentPrediction} predictionStatus={predictionStatus} onVideoEnded={handleDemoVideoEnded} camFps={camFps} sendFps={sendFps} liveSegmentStatus={liveSegmentStatus} />
             </div>
           </div>
 
@@ -501,13 +502,18 @@ export default function CitizenKiosk({
 
               <div className="relative flex items-stretch gap-2 flex-1">
                 <button
-                  onClick={() => validationDemoScenarios[0] && handleDemoSelect(validationDemoScenarios[0])}
+                  onClick={() => {
+                    const def =
+                      validationDemoScenarios.find((s) => s.clips[0]?.id === 'resident_realz03_01_hello') ??
+                      validationDemoScenarios[0]
+                    if (def) handleDemoSelect(def)
+                  }}
                   disabled={sessionEnded}
                   className={`flex-1 flex items-center justify-center py-2.5 text-sm font-black rounded-lg border-2 transition-all active:scale-95 shadow-sm ${
                     sessionEnded ? 'bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed' : isDemoMode ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-slate-900 border-slate-950 text-white hover:bg-slate-800'
                   }`}
                 >
-                  {isDemoMode ? `데모: ${activeDemoLabel}` : '데모 시연'}
+                  {isDemoMode ? `데모: ${activeDemoClipLabel || activeDemoLabel}` : '데모 시연'}
                 </button>
                 <button
                   type="button"
