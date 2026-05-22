@@ -283,6 +283,7 @@ export function useSignLanguage(
   const camRafRef = useRef<number | null>(null)
   const [activeDemoClipLabel, setActiveDemoClipLabel] = useState('')
   const [currentPrediction, setCurrentPrediction] = useState<Prediction | null>(null)
+  const [lastLookupKey, setLastLookupKey] = useState<string | null>(null)
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([])
   const [selectedDeviceId, setSelectedDeviceId] = useState('')
   const [liveSegmentStatus, setLiveSegmentStatus] = useState<LiveSegmentStatus>(INITIAL_LIVE_SEGMENT_STATUS)
@@ -487,6 +488,8 @@ export function useSignLanguage(
       })
       const data = await response.json()
       if (runToken !== demoRunTokenRef.current) return
+      const lookupKey = typeof data?.lookup_key === 'string' ? data.lookup_key.trim() : ''
+      if (lookupKey) setLastLookupKey(lookupKey)
       onMessageRef.current({
         id: `${Date.now()}-demo-gloss-${Math.random()}`,
         sender: 'citizen',
@@ -1856,6 +1859,7 @@ export function useSignLanguage(
   return {
     videoRef, canvasRef, landmarkCanvasRef,
     isRunning, isDemoMode, activeDemoLabel, activeDemoClipLabel, currentPrediction,
+    lastLookupKey,
     videoDevices, selectedDeviceId, setSelectedDeviceId,
     startCamera, stopCamera, startDemoScenario, handleDemoVideoEnded, getPredictionStatus,
     camFps, sendFps,

@@ -62,6 +62,7 @@ from notification.routes import notification_bp
 from src.services.gloss_to_text_service import gloss_to_text
 from src.utils.config import load_config
 from summary.routes import summary_bp
+from welfare.routes import welfare_bp
 
 if VISION_DISABLED:
     mediapipe_landmarks_to_frame = None
@@ -88,6 +89,7 @@ CORS(app, supports_credentials=True)
 app.register_blueprint(auth_bp)
 app.register_blueprint(summary_bp)
 app.register_blueprint(notification_bp)
+app.register_blueprint(welfare_bp)
 
 memory_windows: dict[str, list[np.ndarray]] = {}
 memory_misses: dict[str, int] = {}

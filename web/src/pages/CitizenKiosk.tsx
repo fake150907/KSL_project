@@ -4,6 +4,8 @@ import type { ChatMessage as ChatMessageType } from '../types'
 import VideoFeed from '../components/VideoFeed'
 import ChatMessage from '../components/ChatMessage'
 import { useSignLanguage, validationDemoScenarios, type DemoScenario } from '../hooks/useSignLanguage'
+import { useWelfarePanel } from '../hooks/useWelfarePanel'
+import { WelfarePanel } from '../components/WelfarePanel'
 import { socket, registerRole } from '../socket'
 
 interface CitizenKioskProps {
@@ -51,11 +53,16 @@ export default function CitizenKiosk({
   const {
     videoRef, canvasRef, landmarkCanvasRef,
     isRunning, isDemoMode, activeDemoLabel, activeDemoClipLabel, currentPrediction,
+    lastLookupKey,
     videoDevices, selectedDeviceId, setSelectedDeviceId,
     startCamera, stopCamera, startDemoScenario, handleDemoVideoEnded, getPredictionStatus,
     camFps, sendFps,
     liveSegmentStatus,
   } = useSignLanguage(handleNewMessageFromKiosk)
+
+  const { welfarePanel, dismiss: dismissWelfarePanel } = useWelfarePanel(
+    currentPrediction?.scenario?.lookup_key || lastLookupKey
+  )
 
   // 키오스크 역할 등록
   useEffect(() => {
@@ -557,6 +564,11 @@ export default function CitizenKiosk({
             </div>
             <span className="text-xs font-bold text-blue-500 bg-blue-50 px-2 py-0.5 rounded-full">{messages.length}</span>
           </div>
+          {welfarePanel.length > 0 && (
+            <div className="shrink-0 px-6 pt-4 pb-2 bg-slate-900">
+              <WelfarePanel items={welfarePanel} onClose={dismissWelfarePanel} />
+            </div>
+          )}
           <div className="flex-1 overflow-y-auto flex flex-col gap-3 px-6 py-4">
             {messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full gap-3 text-center opacity-40">
