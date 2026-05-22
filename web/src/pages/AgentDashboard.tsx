@@ -78,10 +78,18 @@ export default function AgentDashboard({
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
 
   const navState = location.state as { citizenData?: { name: string; dob: string; gender: string; phone: string } } | null
-  const citizenName = propCitizenName || navState?.citizenData?.name || '민원인'
-  const citizenDob = propCitizenDob || navState?.citizenData?.dob || '미입력'
-  const citizenGender = propCitizenGender || navState?.citizenData?.gender || '미입력'
-  const citizenPhone = propCitizenPhone || navState?.citizenData?.phone || ''
+  const storedCitizenData = (() => {
+    try {
+      return JSON.parse(sessionStorage.getItem('current_citizen_data') || 'null') as { name?: string; dob?: string; gender?: string; phone?: string } | null
+    } catch {
+      return null
+    }
+  })()
+  const activeCitizenData = navState?.citizenData || storedCitizenData
+  const citizenName = activeCitizenData?.name || propCitizenName || '민원인'
+  const citizenDob = activeCitizenData?.dob || propCitizenDob || '미입력'
+  const citizenGender = activeCitizenData?.gender || propCitizenGender || '미입력'
+  const citizenPhone = activeCitizenData?.phone || propCitizenPhone || ''
 
   const [videoConnected, setVideoConnected] = useState(false)
   const [notes, setNotes] = useState<AgentNote[]>([])
@@ -275,7 +283,7 @@ export default function AgentDashboard({
   }
 
   return (
-    <div className="min-h-screen w-full overflow-x-hidden bg-slate-100 text-slate-900">
+    <div className="flex h-dvh min-h-screen w-full flex-col overflow-hidden bg-slate-100 text-slate-900">
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="flex flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between md:px-6">
           <div className="min-w-0">
@@ -300,9 +308,9 @@ export default function AgentDashboard({
         </div>
       </header>
 
-      <main className="grid min-w-0 grid-cols-1 gap-3 p-3 md:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.15fr)_minmax(0,0.9fr)]">
+      <main className="grid min-h-0 min-w-0 flex-1 auto-rows-max grid-cols-1 gap-3 overflow-y-auto overflow-x-hidden p-3 md:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.15fr)_minmax(0,0.9fr)] xl:grid-rows-[minmax(0,1fr)_auto]">
         <section className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white">
-          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
             <h2 className="text-base font-black">민원인 수어 영상</h2>
             <span className={`rounded-full border px-2.5 py-1 text-xs font-black ${videoConnected ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-50 text-slate-500'}`}>
               {videoConnected ? '연결됨' : '대기 중'}
@@ -327,11 +335,11 @@ export default function AgentDashboard({
           </div>
 
           <div className="space-y-3 p-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-black text-slate-700">민원 메모</h3>
               <span className="text-xs font-bold text-slate-400">{notes.length}개</span>
             </div>
-            <div className="grid grid-cols-[minmax(0,1fr)_minmax(78px,92px)_40px] gap-2">
+            <div className="grid grid-cols-[minmax(0,1fr)_40px] gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(78px,92px)_40px]">
               <input
                 value={noteInput}
                 onChange={(event) => setNoteInput(event.target.value)}
@@ -339,7 +347,7 @@ export default function AgentDashboard({
                 placeholder="메모 입력..."
                 className="h-10 min-w-0 rounded-lg border border-slate-200 px-3 text-sm font-semibold outline-none focus:border-blue-400"
               />
-              <select value={noteTag} onChange={(event) => setNoteTag(event.target.value as AgentNote['tag'])} className="h-10 min-w-0 rounded-lg border border-slate-200 bg-white px-2 text-sm font-bold outline-none">
+              <select value={noteTag} onChange={(event) => setNoteTag(event.target.value as AgentNote['tag'])} className="h-10 min-w-0 rounded-lg border border-slate-200 bg-white px-2 text-sm font-bold outline-none max-sm:col-span-2">
                 <option value="문의">문의</option>
                 <option value="확인">확인</option>
                 <option value="처리">처리</option>
@@ -360,8 +368,8 @@ export default function AgentDashboard({
           </div>
         </section>
 
-        <section className="flex min-h-[460px] min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white md:min-h-[540px] xl:min-h-[620px]">
-          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+        <section className="flex min-h-[420px] min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white xl:min-h-0">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
             <h2 className="text-base font-black">실시간 통역</h2>
             <span className="flex items-center gap-2 text-xs font-black text-emerald-700">
               <span className="h-2 w-2 rounded-full bg-emerald-500" /> 양방향 통역 중
@@ -379,7 +387,7 @@ export default function AgentDashboard({
             </div>
           </div>
 
-          <div ref={chatListRef} className="min-h-[220px] flex-1 overflow-y-auto px-4 py-5">
+          <div className="min-h-[220px] flex-1 overflow-y-auto overscroll-contain px-4 py-5">
             {messages.length === 0 ? (
               <div className="flex h-full items-center justify-center text-center text-sm font-bold text-slate-300">
                 상담이 시작되면 민원인 발화와 상담원 응답이 여기에 기록됩니다.
@@ -390,91 +398,93 @@ export default function AgentDashboard({
           </div>
         </section>
 
-        <section className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white md:col-span-2 xl:col-span-1">
-          <div className="border-b border-slate-100 px-4 py-3">
+        <section className="flex min-h-[520px] min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white md:col-span-2 xl:col-span-1 xl:min-h-0">
+          <div className="shrink-0 border-b border-slate-100 px-4 py-3">
             <h2 className="text-base font-black">상담원 답변 작성</h2>
             <p className="mt-1 text-sm font-semibold text-slate-500">답변은 민원인 화면에서 수어/문자로 안내됩니다.</p>
           </div>
-          <div className="space-y-4 p-4">
-            {isSpeechActive && (
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            <div className="space-y-4 p-4">
               <div className="flex h-12 items-end gap-1">
-                {voiceLevels.map((level, index) => (
-                  <div
-                    key={index}
-                    className="flex-1 rounded-full transition-all"
-                    style={{
-                      height: `${Math.round(level * 100)}%`,
-                      minHeight: '10%',
-                      background: level > 0.2 ? VOICE_BAR_COLORS[index % VOICE_BAR_COLORS.length] : '#E2E8F0',
-                    }}
-                  />
+                {voiceLevels.map((level, index) => {
+                  const displayLevel = isSpeechActive ? level : 0.12
+                  return (
+                    <div
+                      key={index}
+                      className="flex-1 rounded-full transition-all"
+                      style={{
+                        height: `${Math.max(10, Math.round(displayLevel * 100))}%`,
+                        background: isSpeechActive && level > 0.2 ? VOICE_BAR_COLORS[index % VOICE_BAR_COLORS.length] : '#E2E8F0',
+                      }}
+                    />
+                  )
+                })}
+              </div>
+              <textarea
+                value={replyInput}
+                onChange={(event) => setReplyInput(event.target.value)}
+                onKeyDown={handleReplyKeyDown}
+                placeholder="민원인에게 전달할 답변을 입력하세요."
+                className="h-36 w-full min-w-0 resize-none rounded-lg border border-slate-200 p-4 text-base font-bold leading-relaxed outline-none focus:border-blue-500"
+              />
+              <div className="grid gap-2 sm:grid-cols-2">
+                <button onClick={sendReply} disabled={!replyInput.trim()} className="whitespace-normal rounded-lg bg-blue-600 px-4 py-3 text-sm font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-200">
+                  전송
+                </button>
+                <button onClick={isSpeechActive ? stopSpeech : startSpeech} className={`whitespace-normal break-words rounded-lg border px-4 py-3 text-sm font-black ${isSpeechActive ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'}`}>
+                  {isSpeechActive ? '음성 입력 중지' : '음성으로 말하기'}
+                </button>
+              </div>
+            </div>
+
+            <div className="border-t border-slate-100 p-4">
+              <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-black text-slate-800">자주쓰는 문장</h3>
+                  <p className="mt-1 text-xs font-semibold text-slate-500">문장을 선택하면 답변창에 입력됩니다. 상담원이 수정한 뒤 전송하세요.</p>
+                </div>
+                <span className="text-xs font-black text-slate-400">{QUICK_REPLIES.length}개</span>
+              </div>
+              <div className="grid gap-2 pr-1 sm:grid-cols-2 xl:grid-cols-1">
+                {QUICK_REPLIES.map((reply) => (
+                  <button
+                    key={reply.title}
+                    onClick={() => setReplyInput(reply.text)}
+                    className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 p-3 text-left hover:border-blue-300 hover:bg-blue-50"
+                  >
+                    <p className="break-words text-sm font-black text-slate-900">{reply.title}</p>
+                    <p className="mt-1 break-words text-sm font-semibold leading-relaxed text-slate-600">{reply.text}</p>
+                  </button>
                 ))}
               </div>
-            )}
-            <textarea
-              value={replyInput}
-              onChange={(event) => setReplyInput(event.target.value)}
-              onKeyDown={handleReplyKeyDown}
-              placeholder="민원인에게 전달할 답변을 입력하세요."
-              className="h-36 w-full min-w-0 resize-none rounded-lg border border-slate-200 p-4 text-base font-bold leading-relaxed outline-none focus:border-blue-500"
-            />
-            <div className="grid gap-2 sm:grid-cols-2">
-              <button onClick={sendReply} disabled={!replyInput.trim()} className="whitespace-normal rounded-lg bg-blue-600 px-4 py-3 text-sm font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-200">
-                전송
-              </button>
-              <button onClick={isSpeechActive ? stopSpeech : startSpeech} className={`whitespace-normal break-words rounded-lg border px-4 py-3 text-sm font-black ${isSpeechActive ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'}`}>
-                {isSpeechActive ? '음성 입력 중지' : '음성으로 말하기'}
-              </button>
             </div>
-          </div>
 
-          <div className="border-t border-slate-100 p-4">
-            <div className="mb-3 flex items-end justify-between">
-              <div className="min-w-0">
-                <h3 className="text-sm font-black text-slate-800">자주쓰는 문장</h3>
-                <p className="mt-1 text-xs font-semibold text-slate-500">문장을 선택하면 답변창에 입력됩니다. 상담원이 수정한 뒤 전송하세요.</p>
+            <div className="border-t border-slate-100 p-4">
+              <div className="grid gap-2">
+                <label className="text-sm font-black text-slate-700">업무 분류</label>
+                <select value={taskType} onChange={(event) => setTaskType(event.target.value)} className="h-11 min-w-0 rounded-lg border border-slate-200 bg-white px-3 text-sm font-black outline-none">
+                  <option>복지카드 재발급</option>
+                  <option>분실 접수</option>
+                  <option>본인 확인</option>
+                  <option>수수료 면제</option>
+                </select>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-2">
+                  <button onClick={() => addNote('처리', `${taskType} 분실 접수 진행`)} className="whitespace-normal rounded-lg border border-slate-200 px-3 py-2 text-sm font-black hover:bg-slate-50">분실 접수</button>
+                  <button onClick={() => addNote('확인', '신분증 본인 확인 완료')} className="whitespace-normal rounded-lg border border-slate-200 px-3 py-2 text-sm font-black hover:bg-slate-50">본인 확인</button>
+                  <button onClick={() => addNote('처리', '재발급 수수료 면제 적용')} className="whitespace-normal rounded-lg border border-slate-200 px-3 py-2 text-sm font-black hover:bg-slate-50">면제 적용</button>
+                  <button onClick={() => addNote('문의', '등기우편 수령 안내 완료')} className="whitespace-normal rounded-lg border border-slate-200 px-3 py-2 text-sm font-black hover:bg-slate-50">수령 안내</button>
+                </div>
+                <label className="flex items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-black text-emerald-800">
+                  <span className="min-w-0 break-words">민원인 이해 확인</span>
+                  <input type="checkbox" checked={understood} onChange={(event) => setUnderstood(event.target.checked)} className="h-5 w-5 accent-emerald-600" />
+                </label>
               </div>
-              <span className="text-xs font-black text-slate-400">{QUICK_REPLIES.length}개</span>
-            </div>
-            <div className="grid max-h-[260px] gap-2 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-1">
-              {QUICK_REPLIES.map((reply) => (
-                <button
-                  key={reply.title}
-                  onClick={() => setReplyInput(reply.text)}
-                  className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 p-3 text-left hover:border-blue-300 hover:bg-blue-50"
-                >
-                  <p className="break-words text-sm font-black text-slate-900">{reply.title}</p>
-                  <p className="mt-1 break-words text-sm font-semibold leading-relaxed text-slate-600">{reply.text}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="mt-auto border-t border-slate-100 p-4">
-            <div className="grid gap-2">
-              <label className="text-sm font-black text-slate-700">업무 분류</label>
-              <select value={taskType} onChange={(event) => setTaskType(event.target.value)} className="h-11 min-w-0 rounded-lg border border-slate-200 bg-white px-3 text-sm font-black outline-none">
-                <option>복지카드 재발급</option>
-                <option>분실 접수</option>
-                <option>본인 확인</option>
-                <option>수수료 면제</option>
-              </select>
-              <div className="grid gap-2 sm:grid-cols-4 xl:grid-cols-2">
-                <button onClick={() => addNote('처리', `${taskType} 분실 접수 진행`)} className="whitespace-normal rounded-lg border border-slate-200 px-3 py-2 text-sm font-black hover:bg-slate-50">분실 접수</button>
-                <button onClick={() => addNote('확인', '신분증 본인 확인 완료')} className="whitespace-normal rounded-lg border border-slate-200 px-3 py-2 text-sm font-black hover:bg-slate-50">본인 확인</button>
-                <button onClick={() => addNote('처리', '재발급 수수료 면제 적용')} className="whitespace-normal rounded-lg border border-slate-200 px-3 py-2 text-sm font-black hover:bg-slate-50">면제 적용</button>
-                <button onClick={() => addNote('문의', '등기우편 수령 안내 완료')} className="whitespace-normal rounded-lg border border-slate-200 px-3 py-2 text-sm font-black hover:bg-slate-50">수령 안내</button>
-              </div>
-              <label className="flex items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-black text-emerald-800">
-                <span className="min-w-0 break-words">민원인 이해 확인</span>
-                <input type="checkbox" checked={understood} onChange={(event) => setUnderstood(event.target.checked)} className="h-5 w-5 accent-emerald-600" />
-              </label>
             </div>
           </div>
         </section>
 
         <section className="min-w-0 rounded-lg border border-slate-200 bg-white p-4 md:col-span-2 xl:col-span-3">
-          <div className="mb-3 flex items-center justify-between">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-base font-black">시나리오 초안</h2>
             <span className="text-xs font-black text-slate-400">{SCENARIO_STEPS.length}단계</span>
           </div>
