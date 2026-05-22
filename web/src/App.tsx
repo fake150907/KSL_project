@@ -8,6 +8,7 @@ import AgentDashboard from './pages/AgentDashboard'
 import KakaoCallback from './pages/KakaoCallback'
 import KioskLaunchScreen from './pages/KioskLaunchScreen'
 import CitizenKiosk from './pages/CitizenKiosk'
+import { MEDIAPIPE_MODE_STORAGE_KEY, SCENARIO_MODE_STORAGE_KEY } from './hooks/useSignLanguage'
 
 const CHANNEL_NAME = 'sign-lang-chat'
 const STORAGE_KEY = 'sign-lang-messages'
@@ -41,6 +42,18 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem(AUTH_KEY) === 'true')
   const seenIds = useRef<Set<string>>(new Set())
   const channelRef = useRef<BroadcastChannel | null>(null)
+
+  useEffect(() => {
+    const mode = new URLSearchParams(window.location.search).get('mp')
+    if (mode === 'client' || mode === 'server') {
+      localStorage.setItem(MEDIAPIPE_MODE_STORAGE_KEY, mode)
+    }
+    const scenario = new URLSearchParams(window.location.search).get('scenario')
+    if (scenario) {
+      const enabled = ['1', 'true', 'yes', 'resident'].includes(scenario.toLowerCase())
+      localStorage.setItem(SCENARIO_MODE_STORAGE_KEY, enabled ? 'resident' : 'off')
+    }
+  }, [])
 
   // 1. 초기 데이터 로드
   useEffect(() => {

@@ -1,3 +1,5 @@
+"""Convert Korean Sign Language gloss sequences into natural Korean text."""
+
 from __future__ import annotations
 
 import argparse
@@ -8,24 +10,15 @@ DEFAULT_PROVIDER = os.environ.get("GLOSS_TO_TEXT_PROVIDER", "anthropic").strip()
 DEFAULT_OPENAI_MODEL = os.environ.get("OPENAI_GLOSS_MODEL", "gpt-4.1-mini")
 DEFAULT_ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_GLOSS_MODEL", "claude-haiku-4-5-20251001")
 
-SYSTEM_PROMPT = """You are a civil-service Korean Sign Language (KSL) gloss translator.
+SYSTEM_PROMPT = """You are a medical Korean Sign Language gloss translation assistant.
 
-Your only job is to convert the input KSL gloss into ONE short, natural Korean sentence.
-
-Rules:
-- Always output exactly one Korean sentence. Never ask for more information.
-- If the gloss is a single word, translate it as a simple statement (e.g. "욕하다" → "욕을 하고 싶어요." or "기분이 나빠요.").
-- Do not add symptoms, body parts, or details that are not in the input.
-- Do not explain, clarify, or ask follow-up questions. Just translate.
-- Output only the Korean sentence, nothing else.
+Convert the input KSL gloss sequence into one natural Korean sentence.
+Keep the meaning grounded in the input glosses and do not add extra symptoms.
 
 Examples:
-- 욕하다 → 욕을 하고 싶어요.
-- 오른쪽 + 위 + 통증 + 못견디다 → 오른쪽 위가 아파서 못 견디겠어요.
-- 소화불량 + 어떻게 + 치료 → 소화불량은 어떻게 치료하나요?
-- 골절 + 회복 + 얼마 → 골절은 회복하는 데 얼마나 걸리나요?
-- 배 + 아프다 → 배가 아파요.
-- 머리 → 머리가 아파요.
+- 오른쪽 + 위 + 통증 + 못견디다 -> 오른쪽 위가 아파서 못 견디겠어요.
+- 소화불량 + 어떻게 + 치료 -> 소화불량은 어떻게 치료하나요?
+- 골절 + 회복 + 얼마 -> 골절은 회복하는 데 얼마나 걸리나요?
 """
 
 
@@ -73,6 +66,13 @@ def gloss_to_text(
     model: str | None = None,
     api_key: str | None = None,
 ) -> str:
+    """Convert a KSL gloss string to a natural Korean sentence.
+
+    Provider is selected by `provider` or `GLOSS_TO_TEXT_PROVIDER`.
+    When the configured API key or package is missing, a local deterministic
+    fallback is used so demos do not expose backend setup errors to patients.
+    Supported providers: `openai`, `anthropic`/`claude`.
+    """
     normalized = _normalize_gloss(gloss)
     if not normalized:
         return ""

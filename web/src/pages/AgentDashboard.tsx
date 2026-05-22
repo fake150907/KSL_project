@@ -73,7 +73,7 @@ export default function AgentDashboard({
 }: AgentDashboardProps) {
   const navigate = useNavigate()
   const location = useLocation()
-  const chatEndRef = useRef<HTMLDivElement>(null)
+  const chatListRef = useRef<HTMLDivElement>(null)
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
 
@@ -122,11 +122,10 @@ export default function AgentDashboard({
   }, [])
 
   useEffect(() => {
-    socket.emit('agent_voice_status', { active: isSpeechActive })
-  }, [isSpeechActive])
+    const chatList = chatListRef.current
+    if (!chatList) return
 
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    chatList.scrollTo({ top: chatList.scrollHeight, behavior: 'smooth' })
   }, [messages])
 
   useEffect(() => {
@@ -396,7 +395,6 @@ export default function AgentDashboard({
             ) : (
               messages.map((message) => <ChatMessage key={message.id} message={message} />)
             )}
-            <div ref={chatEndRef} />
           </div>
         </section>
 

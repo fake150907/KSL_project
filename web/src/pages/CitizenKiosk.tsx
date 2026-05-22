@@ -4,6 +4,8 @@ import type { ChatMessage as ChatMessageType } from '../types'
 import VideoFeed from '../components/VideoFeed'
 import ChatMessage from '../components/ChatMessage'
 import { useSignLanguage, validationDemoScenarios, type DemoScenario } from '../hooks/useSignLanguage'
+import { useWelfarePanel } from '../hooks/useWelfarePanel'
+import { WelfarePanel } from '../components/WelfarePanel'
 import { socket, registerRole } from '../socket'
 
 interface CitizenKioskProps {
@@ -61,10 +63,16 @@ export default function CitizenKiosk({
   const {
     videoRef, canvasRef, landmarkCanvasRef,
     isRunning, isDemoMode, activeDemoLabel, activeDemoClipLabel, currentPrediction,
+    lastLookupKey,
     videoDevices, selectedDeviceId, setSelectedDeviceId,
     startCamera, stopCamera, startDemoScenario, handleDemoVideoEnded, getPredictionStatus,
     camFps, sendFps,
+    liveSegmentStatus,
   } = useSignLanguage(handleNewMessageFromKiosk)
+
+  const { welfarePanel, dismiss: dismissWelfarePanel } = useWelfarePanel(
+    currentPrediction?.scenario?.lookup_key || lastLookupKey
+  )
 
   // 키오스크 역할 등록
   useEffect(() => {
@@ -241,7 +249,7 @@ export default function CitizenKiosk({
   useEffect(() => {
     if (!currentPrediction?.window_filled) return
     const top = currentPrediction.top_predictions?.[0]
-    const label = currentPrediction.label || top?.label
+    const label = currentPrediction.display_label || currentPrediction.label || top?.display_label || top?.label
     const confidence = currentPrediction.confidence || top?.confidence || 0
     if (!label) return
 
@@ -250,7 +258,7 @@ export default function CitizenKiosk({
       if (last && last.label === label && Math.abs(last.confidence - confidence) < 0.001) return prev
       return [{ label, confidence, timestamp: Date.now() }, ...prev].slice(0, 4)
     })
-  }, [currentPrediction?.timestamp, currentPrediction?.window_filled, currentPrediction?.label, currentPrediction?.confidence, currentPrediction?.top_predictions])
+  }, [currentPrediction?.timestamp, currentPrediction?.window_filled, currentPrediction?.label, currentPrediction?.display_label, currentPrediction?.confidence, currentPrediction?.top_predictions])
 
   const predictionStatus = currentPrediction ? getPredictionStatus(currentPrediction) : ''
   const isRecognized = !!currentPrediction?.window_filled && !!currentPrediction?.label && (currentPrediction?.confidence ?? 0) >= 0.30
