@@ -604,6 +604,11 @@ export default function CitizenKiosk({
 
           <section className="order-2 flex min-h-[430px] flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm lg:h-full lg:min-h-0">
             <div className="border-b border-slate-200 px-4 py-3 text-center text-base font-black text-slate-800">통역 상태</div>
+            {welfarePanel.length > 0 && (
+              <div className="border-b border-slate-200 bg-slate-950 p-3">
+                <WelfarePanel items={welfarePanel} onClose={dismissWelfarePanel} />
+              </div>
+            )}
             <div className="flex flex-1 flex-col justify-center gap-4 px-4 py-5">
               {renderStepLane('blue', '민원인 수어 입력 흐름', citizenStep)}
               <div className="flex items-center justify-center gap-4 py-2">
