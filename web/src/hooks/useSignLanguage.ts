@@ -272,6 +272,7 @@ export function useSignLanguage(
   const liveHandsDownStartRef = useRef<number | null>(null)
 
   const [isRunning, setIsRunning] = useState(false)
+  const isRunningRef = useRef(false)
   const [isDemoMode, setIsDemoMode] = useState(false)
   const [activeDemoLabel, setActiveDemoLabel] = useState('')
   const [camFps, setCamFps] = useState(0)
@@ -291,6 +292,7 @@ export function useSignLanguage(
   const selectedDeviceIdRef = useRef(selectedDeviceId)
   useEffect(() => { selectedDeviceIdRef.current = selectedDeviceId }, [selectedDeviceId])
   useEffect(() => { onMessageRef.current = onMessage }, [onMessage])
+  useEffect(() => { isRunningRef.current = isRunning }, [isRunning])
 
   useEffect(() => {
     isMounted.current = true
@@ -317,7 +319,11 @@ export function useSignLanguage(
   const clearLandmarkOverlay = useCallback(() => {
     const canvas = landmarkCanvasRef.current
     const ctx = canvas?.getContext('2d')
-    if (canvas && ctx) ctx.clearRect(0, 0, canvas.width, canvas.height)
+    if (!canvas || !ctx) return
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.clearRect(0, 0, canvas.clientWidth || canvas.width, canvas.clientHeight || canvas.height)
   }, [])
 
   const resolveDemoSrc = (src: string) => {
@@ -1161,6 +1167,7 @@ export function useSignLanguage(
 
   const stopCamera = useCallback(() => {
     const wasDemoMode = isDemoModeRef.current
+    isRunningRef.current = false
     if (activeStreamRef.current) {
       activeStreamRef.current.getTracks().forEach((t) => t.stop())
       activeStreamRef.current = null
@@ -1419,12 +1426,16 @@ export function useSignLanguage(
 
   const handlePredictionData = useCallback((data: any, frameId: number) => {
     if (!isMounted.current) return
+    if (!isRunningRef.current) {
+      clearLandmarkOverlay()
+      return
+    }
 
     const responseFrameId = Number(data.frame_id ?? data.prediction?.frame_id ?? frameId)
     if (responseFrameId < latestFrameIdRef.current) return
     if (!data.prediction) return
 
-    if (data.prediction.landmarks) {
+    if (data.prediction.landmarks && isRunningRef.current) {
       const overlayCtx = landmarkCanvasRef.current?.getContext('2d')
       if (overlayCtx) drawLandmarks(overlayCtx, data.prediction.landmarks)
     }
@@ -1646,12 +1657,16 @@ export function useSignLanguage(
         const data = await res.json()
         
         if (!isMounted.current) return
+        if (!isRunningRef.current) {
+          clearLandmarkOverlay()
+          return
+        }
 
         const responseFrameId = Number(data.frame_id ?? data.prediction?.frame_id ?? frameId)
         if (responseFrameId < latestFrameIdRef.current) return
         if (!data.prediction) return
 
-        if (data.prediction.landmarks) {
+        if (data.prediction.landmarks && isRunningRef.current) {
           const overlayCtx = landmarkCanvasRef.current?.getContext('2d')
           if (overlayCtx) drawLandmarks(overlayCtx, data.prediction.landmarks)
         }

@@ -129,6 +129,19 @@ export default function AgentDashboard({
   }, [messages])
 
   useEffect(() => {
+    socket.emit('agent_voice_status', { active: isSpeechActive })
+
+    return () => {
+      socket.emit('agent_voice_status', { active: false })
+    }
+  }, [isSpeechActive])
+
+  useEffect(() => {
+    if (!isSpeechActive) return
+    socket.emit('agent_voice_status', { active: true, levels: voiceLevels })
+  }, [isSpeechActive, voiceLevels])
+
+  useEffect(() => {
     const handleIncomingMessage = (msg: ChatMessageType) => onNewMessage(msg)
     socket.on('chat_message', handleIncomingMessage)
     return () => {
@@ -368,7 +381,7 @@ export default function AgentDashboard({
           </div>
         </section>
 
-        <section className="flex min-h-[420px] min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white xl:min-h-0">
+        <section className="flex min-h-[420px] max-h-[calc(100dvh-7rem)] min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white xl:max-h-none xl:min-h-0">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
             <h2 className="text-base font-black">실시간 통역</h2>
             <span className="flex items-center gap-2 text-xs font-black text-emerald-700">
@@ -387,7 +400,7 @@ export default function AgentDashboard({
             </div>
           </div>
 
-          <div className="min-h-[220px] flex-1 overflow-y-auto overscroll-contain px-4 py-5">
+          <div ref={chatListRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5">
             {messages.length === 0 ? (
               <div className="flex h-full items-center justify-center text-center text-sm font-bold text-slate-300">
                 상담이 시작되면 민원인 발화와 상담원 응답이 여기에 기록됩니다.
