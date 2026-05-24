@@ -18,6 +18,15 @@ interface CitizenKioskProps {
   citizenPhone?: string
 }
 
+type TextSizeMode = 'base' | 'large' | 'xlarge'
+type WelfareThemeMode = 'light' | 'dark'
+
+const CONTENT_TEXT_SIZE_CLASSES: Record<TextSizeMode, { caption: string; chat: string }> = {
+  base: { caption: 'text-2xl', chat: 'text-sm' },
+  large: { caption: 'text-3xl', chat: 'text-base' },
+  xlarge: { caption: 'text-4xl', chat: 'text-lg' },
+}
+
 export default function CitizenKiosk({
   messages,
   onNewMessage,
@@ -241,6 +250,9 @@ export default function CitizenKiosk({
   }, [isRunning, videoRef]);
 
   const [clock, setClock] = useState(() => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }))
+  const [textSizeMode, setTextSizeMode] = useState<TextSizeMode>('base')
+  const [welfareThemeMode, setWelfareThemeMode] = useState<WelfareThemeMode>('light')
+
   useEffect(() => {
     const id = setInterval(() => setClock(new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })), 10000)
     return () => clearInterval(id)
@@ -450,8 +462,16 @@ export default function CitizenKiosk({
     void startDemoScenario(scenario)
   }
 
+  const handleEmergencyCall = () => {
+    if (window.confirm('119 긴급 전화로 연결하시겠습니까?')) {
+      window.location.href = 'tel:119'
+    }
+  }
+
   const citizenStep = isRunning ? (isRecognized ? 3 : currentPrediction?.window_filled ? 2 : 1) : 0
   const agentStep = agentVoiceActive ? 1 : 0
+  const contentTextSize = CONTENT_TEXT_SIZE_CLASSES[textSizeMode]
+  const isDarkMode = welfareThemeMode === 'dark'
   const latestGlossCaption = [...messages]
     .reverse()
     .find((message) =>
@@ -462,29 +482,23 @@ export default function CitizenKiosk({
 
   const renderStepLane = (tone: 'blue' | 'green', label: string, activeStep: number) => {
     const activeClass = tone === 'blue'
-      ? 'border-blue-600 bg-blue-600 text-white shadow-[0_0_16px_rgba(37,99,235,0.35)]'
-      : 'border-emerald-600 bg-emerald-600 text-white shadow-[0_0_16px_rgba(5,150,105,0.35)]'
-    const labelClass = tone === 'blue' ? 'text-blue-700' : 'text-emerald-700'
+      ? 'border-[#2563eb] bg-[#2563eb] text-white shadow-[0_0_16px_rgba(37,99,235,0.22)]'
+      : 'border-[#0f766e] bg-[#0f766e] text-white shadow-[0_0_16px_rgba(15,118,110,0.24)]'
+    const labelClass = tone === 'blue' ? (isDarkMode ? 'text-[#93c5fd]' : 'text-[#2563eb]') : (isDarkMode ? 'text-[#5eead4]' : 'text-[#0f766e]')
     const steps = ['입력', '번역 중', '출력']
 
     return (
-      <div className="rounded-lg border border-slate-200 bg-white px-3 py-3">
+      <div className={`rounded-lg border px-3 py-3 ${isDarkMode ? 'border-[#324155] bg-[#111827]' : 'border-[#d8e0ea] bg-white'}`}>
         <p className={`mb-3 text-center text-xs font-black ${labelClass}`}>{label}</p>
         <div className="flex items-center justify-between gap-2">
           {steps.map((step, index) => (
             <div key={step} className="flex flex-1 items-center gap-2">
               <div className="flex min-w-0 flex-1 flex-col items-center gap-1.5">
-                <span className={`flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-black transition-all duration-300 ${activeStep === index + 1 ? activeClass : 'border-slate-300 bg-white text-slate-700'}`}>
+                <span className={`flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-black transition-all duration-300 ${activeStep === index + 1 ? activeClass : isDarkMode ? 'border-[#40516a] bg-[#172235] text-slate-200' : 'border-[#cbd5e1] bg-white text-[#334155]'}`}>
                   {index + 1}
                 </span>
-                <span className="text-[11px] font-bold text-slate-600">{step}</span>
+                <span className={`text-[11px] font-bold ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{step}</span>
               </div>
-              {index < steps.length - 1 && (
-                <svg className="h-5 w-5 shrink-0 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                  <path d="M5 12h14" />
-                  <path d="m13 6 6 6-6 6" />
-                </svg>
-              )}
             </div>
           ))}
         </div>
@@ -508,7 +522,7 @@ export default function CitizenKiosk({
   )
 
   return (
-    <div className="fixed inset-0 bg-slate-100 flex flex-col overflow-hidden">
+    <div data-theme={isDarkMode ? 'dark' : 'light'} className={`fixed inset-0 flex flex-col overflow-hidden transition-colors duration-300 ${isDarkMode ? 'bg-[#0f172a]' : 'bg-[#f5f7fb]'}`}>
       
       {isWaitingForAgent && (
         <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-white/95 backdrop-blur-md px-4 text-center">
@@ -526,30 +540,69 @@ export default function CitizenKiosk({
         </div>
       )}
 
-      <header className="flex-shrink-0 flex items-center justify-between px-6 py-3 border-b border-slate-200 bg-white z-10 shadow-sm">
+      <header className={`z-10 flex flex-shrink-0 items-center justify-between border-b px-6 py-3 shadow-sm transition-colors duration-300 ${isDarkMode ? 'border-[#263244] bg-[#121b2b]' : 'border-[#d8e0ea] bg-white'}`}>
         <div className="flex flex-col gap-0.5">
-          <span className="text-xl font-black tracking-tight text-slate-900">수어 통역 키오스크</span>
-          <span className="text-sm text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded-md inline-block w-fit">{roomLabel} - {actualCitizenName}님</span>
+          <span className={`text-xl font-black tracking-tight ${isDarkMode ? 'text-slate-50' : 'text-[#172033]'}`}>수어 통역 키오스크</span>
+          <span className={`inline-block w-fit rounded-md px-2 py-0.5 text-sm font-bold ${isDarkMode ? 'bg-[#1e3a5f] text-[#bfdbfe]' : 'bg-[#eaf2ff] text-[#2563eb]'}`}>{roomLabel} - {actualCitizenName}님</span>
         </div>
-        <div className="flex flex-col items-end gap-0.5">
-          <span className="text-2xl font-black tabular-nums text-slate-800">{clock}</span>
-          <span className={`flex items-center gap-1.5 text-xs font-bold ${isRunning ? 'text-emerald-600' : 'text-slate-400'}`}>
-            <span className={`rounded-full shrink-0 w-2 h-2 ${isRunning ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]' : 'bg-slate-300'}`} />
-            {isRunning ? '카메라 활성' : '카메라 대기'}
-          </span>
+        <div className="flex items-center gap-4">
+          <div className={`flex items-center overflow-hidden rounded-lg border shadow-sm ${isDarkMode ? 'border-[#324155] bg-[#172235]' : 'border-[#d8e0ea] bg-[#f8fafc]'}`}>
+            <span className={`border-r px-3 py-2 text-sm font-black ${isDarkMode ? 'border-[#324155] text-slate-200' : 'border-[#d8e0ea] text-slate-600'}`}>글자 크기</span>
+            {([
+              ['base', '가', 'text-sm'],
+              ['large', '가', 'text-base'],
+              ['xlarge', '가', 'text-lg'],
+            ] as const).map(([mode, label, sizeClass]) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setTextSizeMode(mode)}
+                aria-label={`글자 크기 ${mode === 'base' ? '기본' : mode === 'large' ? '크게' : '더 크게'}`}
+                title={`글자 크기 ${mode === 'base' ? '기본' : mode === 'large' ? '크게' : '더 크게'}`}
+                className={`flex h-10 w-11 items-center justify-center border-r font-black transition-all last:border-r-0 active:scale-95 ${sizeClass} ${isDarkMode ? 'border-[#324155]' : 'border-[#d8e0ea]'} ${textSizeMode === mode ? 'bg-[#2563eb] text-white shadow-inner' : isDarkMode ? 'bg-[#111827] text-slate-100 hover:bg-[#1f2a3d]' : 'bg-white text-[#172033] hover:bg-[#eef6ff]'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className={`flex items-center overflow-hidden rounded-lg border shadow-sm ${isDarkMode ? 'border-[#324155] bg-[#172235]' : 'border-[#d8e0ea] bg-[#f8fafc]'}`}>
+            <span className={`border-r px-3 py-2 text-sm font-black ${isDarkMode ? 'border-[#324155] text-slate-200' : 'border-[#d8e0ea] text-slate-600'}`}>화면 모드</span>
+            {([
+              ['light', '라이트'],
+              ['dark', '다크'],
+            ] as const).map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setWelfareThemeMode(mode)}
+                aria-label={`${label} 모드`}
+                title={`${label} 모드`}
+                className={`flex h-10 min-w-14 items-center justify-center border-r px-3 text-sm font-black transition-all last:border-r-0 active:scale-95 ${isDarkMode ? 'border-[#324155]' : 'border-[#d8e0ea]'} ${welfareThemeMode === mode ? (mode === 'dark' ? 'bg-[#0b1220] text-white shadow-inner' : 'bg-[#2563eb] text-white shadow-inner') : isDarkMode ? 'bg-[#111827] text-slate-100 hover:bg-[#1f2a3d]' : 'bg-white text-slate-700 hover:bg-[#f1f5f9]'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-col items-end gap-0.5">
+            <span className={`text-2xl font-black tabular-nums ${isDarkMode ? 'text-slate-100' : 'text-[#172033]'}`}>{clock}</span>
+            <span className={`flex items-center gap-1.5 text-xs font-bold ${isRunning ? (isDarkMode ? 'text-[#5eead4]' : 'text-[#0f766e]') : 'text-slate-400'}`}>
+              <span className={`h-2 w-2 shrink-0 rounded-full ${isRunning ? 'bg-[#14b8a6] shadow-[0_0_8px_rgba(20,184,166,0.36)]' : 'bg-slate-300'}`} />
+              {isRunning ? '카메라 활성' : '카메라 대기'}
+            </span>
+          </div>
         </div>
       </header>
 
-      <div className="flex-1 min-h-0 overflow-y-auto bg-slate-100 p-3 md:p-5">
+      <div className={`min-h-0 flex-1 overflow-y-auto p-3 transition-colors duration-300 md:p-5 ${isDarkMode ? 'bg-[#0f172a]' : 'bg-[#f5f7fb]'}`}>
         <div className="mx-auto grid min-h-full w-full max-w-[1280px] grid-cols-1 gap-3 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(300px,1fr)_minmax(260px,0.78fr)_minmax(300px,1fr)]">
-          <section className="order-1 flex min-h-[560px] flex-col overflow-hidden rounded-lg border-2 border-blue-600 bg-white shadow-sm lg:h-full lg:min-h-0">
-            <div className="bg-blue-700 px-4 py-3 text-center text-base font-black text-white">민원인 (수어 입력)</div>
-            <div className="min-h-0 flex-1 bg-slate-100 p-3">
-              <div className="relative h-full min-h-[270px] overflow-hidden rounded-lg border border-slate-200 bg-black">
+          <section className={`order-1 flex min-h-[560px] flex-col overflow-hidden rounded-lg border shadow-sm transition-colors duration-300 lg:h-full lg:min-h-0 ${isDarkMode ? 'border-[#2b3a50] bg-[#121b2b]' : 'border-[#c9d7ee] bg-white'}`}>
+            <div className="bg-[#2563eb] px-4 py-3 text-center text-base font-black text-white">민원인 (수어 입력)</div>
+            <div className={`min-h-0 flex-1 p-3 ${isDarkMode ? 'bg-[#0f172a]' : 'bg-[#f3f6fb]'}`}>
+              <div className={`relative h-full min-h-[270px] overflow-hidden rounded-lg border bg-black ${isDarkMode ? 'border-[#334155]' : 'border-[#d8e0ea]'}`}>
                 <VideoFeed videoRef={videoRef} canvasRef={canvasRef} landmarkCanvasRef={landmarkCanvasRef} isRunning={isRunning} currentPrediction={currentPrediction} predictionStatus={predictionStatus} onVideoEnded={handleDemoVideoEnded} camFps={camFps} sendFps={sendFps} />
               </div>
             </div>
-            <div className={`flex shrink-0 items-center gap-3 border-t border-slate-200 px-4 py-3 transition-colors duration-300 ${isRunning ? isRecognized ? 'bg-emerald-50' : 'bg-blue-50' : 'bg-white'}`}>
+            <div className={`flex shrink-0 items-center gap-3 border-t px-4 py-3 transition-colors duration-300 ${isDarkMode ? 'border-[#263244]' : 'border-[#d8e0ea]'} ${isRunning ? isRecognized ? (isDarkMode ? 'bg-[#123334]' : 'bg-[#ecfdf5]') : (isDarkMode ? 'bg-[#132746]' : 'bg-[#eff6ff]') : (isDarkMode ? 'bg-[#121b2b]' : 'bg-white')}`}>
               {isRunning ? (
                 <>
                   <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${isRecognized ? 'bg-emerald-100' : 'bg-blue-100'}`}>
@@ -557,35 +610,35 @@ export default function CitizenKiosk({
                   </div>
                   <div className="flex min-w-0 flex-col">
                     <span className={`text-xs font-bold ${isRecognized ? 'text-emerald-600' : 'text-blue-600'}`}>{isRecognized ? '수어 인식 성공' : '실시간 인식 중'}</span>
-                    <span className="truncate text-sm font-black leading-tight text-slate-800">{bannerLabel || '손을 카메라에 맞춰 보여주세요.'}</span>
+                    <span className={`truncate text-sm font-black leading-tight ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`}>{bannerLabel || '손을 카메라에 맞춰 보여주세요.'}</span>
                   </div>
                 </>
               ) : (
                 <span className="mx-auto text-center text-xs font-bold italic text-slate-400">카메라 시작 버튼을 누르면 수어 번역을 시작합니다.</span>
               )}
             </div>
-            <div className="border-t border-slate-200 bg-white p-4">
-              <span className="mb-2 block text-xs font-black text-blue-700">실시간 자막</span>
-              <div className={`h-[116px] overflow-y-scroll overscroll-contain rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-2xl font-black leading-snug ${latestCitizenCaption ? 'text-slate-900' : 'text-slate-400'}`}>
+            <div className={`border-t p-4 ${isDarkMode ? 'border-[#263244] bg-[#121b2b]' : 'border-[#d8e0ea] bg-white'}`}>
+              <span className={`mb-2 block text-xs font-black ${isDarkMode ? 'text-[#93c5fd]' : 'text-[#2563eb]'}`}>실시간 자막</span>
+              <div className={`h-[116px] overflow-y-scroll overscroll-contain rounded-lg border px-4 py-3 font-black leading-snug ${contentTextSize.caption} ${isDarkMode ? 'border-[#334155] bg-[#0f172a]' : 'border-[#d8e0ea] bg-[#f8fafc]'} ${latestCitizenCaption ? (isDarkMode ? 'text-slate-50' : 'text-[#172033]') : 'text-slate-400'}`}>
                 {latestCitizenCaption || '수어를 인식하면 변환 문장이 표시됩니다.'}
               </div>
             </div>
-            <div className="flex shrink-0 flex-col gap-2 border-t border-slate-100 bg-white px-4 py-3">
+            <div className={`flex shrink-0 flex-col gap-2 border-t px-4 py-3 ${isDarkMode ? 'border-[#263244] bg-[#121b2b]' : 'border-[#edf1f7] bg-white'}`}>
               <div className="flex gap-2">
-                <button onClick={isRunning ? stopCamera : startCamera} disabled={sessionEnded} className={`flex-1 rounded-lg border-2 py-2.5 text-sm font-black shadow-sm transition-all active:scale-95 ${sessionEnded ? 'bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed' : isRunning ? 'bg-red-50 border-red-200 text-red-600 hover:bg-red-100' : 'bg-blue-600 border-blue-700 text-white hover:bg-blue-700 shadow-blue-100'}`}>
+                <button onClick={isRunning ? stopCamera : startCamera} disabled={sessionEnded} className={`flex-1 rounded-lg border py-2.5 text-sm font-black shadow-sm transition-all active:scale-95 ${sessionEnded ? 'cursor-not-allowed border-slate-200 bg-slate-50 text-slate-300' : isRunning ? 'border-[#fecaca] bg-[#fff1f2] text-[#dc2626] hover:bg-[#ffe4e6]' : 'border-[#1d4ed8] bg-[#2563eb] text-white shadow-blue-500/15 hover:bg-[#1d4ed8]'}`}>
                   {sessionEnded ? '상담 종료됨' : isRunning ? '카메라 중지' : '카메라 시작'}
                 </button>
                 <div className="relative flex flex-1 items-stretch gap-2">
-                  <button onClick={() => validationDemoScenarios[0] && handleDemoSelect(validationDemoScenarios[0])} disabled={sessionEnded} className={`flex flex-1 items-center justify-center rounded-lg border-2 py-2.5 text-sm font-black shadow-sm transition-all active:scale-95 ${sessionEnded ? 'bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed' : isDemoMode ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-slate-900 border-slate-950 text-white hover:bg-slate-800'}`}>
+                  <button onClick={() => validationDemoScenarios[0] && handleDemoSelect(validationDemoScenarios[0])} disabled={sessionEnded} className={`flex flex-1 items-center justify-center rounded-lg border py-2.5 text-sm font-black shadow-sm transition-all active:scale-95 ${sessionEnded ? 'cursor-not-allowed border-slate-200 bg-slate-50 text-slate-300' : isDemoMode ? 'border-[#99f6e4] bg-[#ecfdf5] text-[#0f766e]' : isDarkMode ? 'border-[#334155] bg-[#111827] text-white hover:bg-[#1f2937]' : 'border-[#cbd5e1] bg-[#172033] text-white hover:bg-[#0f172a]'}`}>
                     {isDemoMode ? `데모: ${activeDemoLabel}` : '데모 시연'}
                   </button>
-                  <button type="button" onClick={() => setShowDemoList((prev) => !prev)} disabled={sessionEnded} className="flex w-10 items-center justify-center rounded-lg border-2 border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50 active:scale-95 disabled:text-slate-300">
+                  <button type="button" onClick={() => setShowDemoList((prev) => !prev)} disabled={sessionEnded} className={`flex w-10 items-center justify-center rounded-lg border shadow-sm active:scale-95 disabled:text-slate-300 ${isDarkMode ? 'border-[#334155] bg-[#111827] text-slate-100 hover:bg-[#1f2937]' : 'border-[#d8e0ea] bg-white text-slate-700 hover:bg-[#f8fafc]'}`}>
                     <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m6 9 6 6 6-6" /></svg>
                   </button>
                   {showDemoList && (
-                    <div className="absolute bottom-full left-0 right-0 z-50 mb-1 overflow-hidden rounded-lg border-2 border-slate-200 bg-white shadow-2xl">
+                    <div className={`absolute bottom-full left-0 right-0 z-50 mb-1 overflow-hidden rounded-lg border shadow-2xl ${isDarkMode ? 'border-[#334155] bg-[#111827]' : 'border-[#d8e0ea] bg-white'}`}>
                       {validationDemoScenarios.map((scenario, index) => (
-                        <button key={scenario.displayText} onClick={() => handleDemoSelect(scenario)} className="flex w-full items-center gap-2 border-b border-slate-100 px-3 py-2.5 text-left text-sm font-black text-slate-800 last:border-b-0 hover:bg-blue-50">
+                        <button key={scenario.displayText} onClick={() => handleDemoSelect(scenario)} className={`flex w-full items-center gap-2 border-b px-3 py-2.5 text-left text-sm font-black last:border-b-0 ${isDarkMode ? 'border-[#263244] text-slate-100 hover:bg-[#1f2937]' : 'border-slate-100 text-[#172033] hover:bg-[#eff6ff]'}`}>
                           <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-blue-600 text-[10px] text-white">{index + 1}</span>
                           <span className="truncate">{scenario.displayText}</span>
                         </button>
@@ -595,57 +648,56 @@ export default function CitizenKiosk({
                 </div>
               </div>
               {videoDevices.length > 1 && (
-                <select value={selectedDeviceId} onChange={(e) => setSelectedDeviceId(e.target.value)} className="w-full rounded-lg border-2 border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-blue-500">
+                <select value={selectedDeviceId} onChange={(e) => setSelectedDeviceId(e.target.value)} className={`w-full rounded-lg border px-3 py-2 text-sm font-bold outline-none focus:border-[#2563eb] ${isDarkMode ? 'border-[#334155] bg-[#111827] text-slate-100' : 'border-[#d8e0ea] bg-[#f8fafc] text-slate-700'}`}>
                   {videoDevices.map((d, i) => <option key={d.deviceId} value={d.deviceId}>{d.label || `카메라 ${i + 1}`}</option>)}
                 </select>
               )}
             </div>
           </section>
 
-          <section className="order-2 flex min-h-[430px] flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm lg:h-full lg:min-h-0">
-            <div className="border-b border-slate-200 px-4 py-3 text-center text-base font-black text-slate-800">통역 상태</div>
-            {welfarePanel.length > 0 && (
-              <div className="border-b border-slate-200 bg-slate-950 p-3">
-                <WelfarePanel items={welfarePanel} onClose={dismissWelfarePanel} />
-              </div>
-            )}
-            <div className="flex flex-1 flex-col justify-center gap-4 px-4 py-5">
+          <section className={`order-2 flex min-h-[430px] flex-col overflow-hidden rounded-lg border shadow-sm transition-colors duration-300 lg:h-full lg:min-h-0 ${isDarkMode ? 'border-[#263244] bg-[#121b2b]' : 'border-[#d8e0ea] bg-white'}`}>
+            <div className={`border-b px-4 py-3 text-center text-base font-black ${isDarkMode ? 'border-[#263244] text-slate-50' : 'border-[#d8e0ea] text-[#172033]'}`}>통역 상태</div>
+            <div className={`flex shrink-0 flex-col gap-3 border-b px-4 py-4 ${isDarkMode ? 'border-[#263244]' : 'border-[#d8e0ea]'}`}>
               {renderStepLane('blue', '민원인 수어 입력 흐름', citizenStep)}
-              <div className="flex items-center justify-center gap-4 py-2">
-                <svg className="h-12 w-24 text-blue-600" viewBox="0 0 120 48" fill="none" stroke="currentColor" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round"><path d="M8 15h92"/><path d="m83 3 20 12-20 12"/></svg>
-                <svg className="h-12 w-24 text-emerald-600" viewBox="0 0 120 48" fill="none" stroke="currentColor" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round"><path d="M112 33H20"/><path d="M37 21 17 33l20 12"/></svg>
-              </div>
-              {renderStepLane('green', '직원 음성 출력 흐름', agentStep)}
-              <div className="mt-1 flex items-center justify-center gap-2 text-sm font-bold text-slate-700"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.35)]" />양방향 실시간 통역 중</div>
+              <div className={`mt-1 flex items-center justify-center gap-2 text-sm font-bold ${isDarkMode ? 'text-slate-200' : 'text-[#334155]'}`}><span className="h-2.5 w-2.5 rounded-full bg-[#10b981] shadow-[0_0_8px_rgba(16,185,129,0.28)]" />양방향 실시간 통역 중</div>
             </div>
-            <div className="border-t border-slate-200 px-4 py-3">
-              <button className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-slate-300 bg-slate-50 py-3 text-base font-black text-slate-700">
-                <svg className="h-5 w-5 text-blue-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M16 21v-2a4 4 0 0 0-8 0v2"/><circle cx="12" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg>
-                직원 연결
+            {welfarePanel.length > 0 ? (
+              <div className={`flex min-h-0 flex-1 border-b p-2.5 ${isDarkMode ? 'border-[#263244] bg-[#101827]' : 'border-[#d8e0ea] bg-[#eef5ff]'}`}>
+                <WelfarePanel items={welfarePanel} onClose={dismissWelfarePanel} compact theme={welfareThemeMode} />
+              </div>
+            ) : (
+              <div className="flex-1" />
+            )}
+            <div className={`shrink-0 border-t px-4 py-3 ${isDarkMode ? 'border-[#263244]' : 'border-[#d8e0ea]'}`}>
+              <button onClick={handleEmergencyCall} className="flex w-full items-center justify-center gap-2 rounded-lg border border-[#dc2626] bg-[#ef4444] py-3 text-base font-black text-white shadow-sm shadow-red-500/10 transition-all hover:bg-[#dc2626] active:scale-[0.98]">
+                <svg className="h-5 w-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.35 1.9.65 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.22a2 2 0 0 1 2.11-.45c.91.3 1.85.52 2.81.65A2 2 0 0 1 22 16.92z" />
+                </svg>
+                긴급 전화
               </button>
             </div>
           </section>
 
-          <section className="order-3 flex min-h-[430px] flex-col overflow-hidden rounded-lg border-2 border-emerald-600 bg-white shadow-sm lg:h-full lg:min-h-0">
-            <div className="bg-emerald-700 px-4 py-3 text-center text-base font-black text-white">직원 (음성 출력)</div>
-            <div className="flex shrink-0 flex-col items-center justify-center gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4 text-center">
-              <p className={`text-base font-black ${agentVoiceActive ? 'text-emerald-700' : 'text-slate-500'}`}>{agentVoiceActive ? '직원이 음성 출력 중입니다' : '직원 음성 출력 대기 중입니다'}</p>
+          <section className={`order-3 flex min-h-[430px] flex-col overflow-hidden rounded-lg border shadow-sm transition-colors duration-300 lg:h-full lg:min-h-0 ${isDarkMode ? 'border-[#24433f] bg-[#121b2b]' : 'border-[#b9e4d4] bg-white'}`}>
+            <div className="bg-[#0f766e] px-4 py-3 text-center text-base font-black text-white">직원 (음성 출력)</div>
+            <div className={`flex shrink-0 flex-col items-center justify-center gap-3 border-b px-5 py-4 text-center ${isDarkMode ? 'border-[#263244] bg-[#101827]' : 'border-[#d8e0ea] bg-[#f8fafc]'}`}>
+              <p className={`text-base font-black ${agentVoiceActive ? (isDarkMode ? 'text-[#5eead4]' : 'text-[#0f766e]') : 'text-slate-500'}`}>{agentVoiceActive ? '직원이 음성 출력 중입니다' : '직원 음성 출력 대기 중입니다'}</p>
               <div className="flex w-full items-center justify-center gap-4">
-                <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-white shadow-lg transition-all ${agentVoiceActive ? 'bg-emerald-600 shadow-emerald-100 scale-105' : 'bg-slate-400 shadow-slate-100'}`}>
+                <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-white shadow-lg transition-all ${agentVoiceActive ? 'scale-105 bg-[#0f766e] shadow-teal-500/20' : 'bg-slate-400 shadow-slate-100'}`}>
                   <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg>
                 </div>
                 <VoiceBars active={agentVoiceActive} />
               </div>
             </div>
-            <div ref={staffChatScrollRef} className="min-h-0 flex-1 overflow-y-scroll overscroll-contain bg-white px-4 py-3">
+            <div ref={staffChatScrollRef} className={`min-h-0 flex-1 overflow-y-scroll overscroll-contain px-4 py-3 ${isDarkMode ? 'bg-[#121b2b]' : 'bg-white'}`}>
               {messages.length === 0 ? (
                 <div className="flex h-full min-h-[180px] flex-col items-center justify-center gap-3 text-center opacity-40">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100"><svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
-                  <div><p className="text-sm font-black text-slate-600">대화 내역이 없습니다</p><p className="mt-1 text-xs font-medium text-slate-500">상담이 시작되면 대화 내용이 표시됩니다</p></div>
+                  <div className={`flex h-12 w-12 items-center justify-center rounded-full ${isDarkMode ? 'bg-slate-800' : 'bg-slate-100'}`}><svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+                  <div><p className={`text-sm font-black ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>대화 내역이 없습니다</p><p className={`mt-1 text-xs font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>상담이 시작되면 대화 내용이 표시됩니다</p></div>
                 </div>
               ) : (
                 <div className="flex flex-col gap-3">
-                  {messages.map((msg) => <ChatMessage key={msg.id} message={msg} />)}
+                  {messages.map((msg) => <ChatMessage key={msg.id} message={msg} textClassName={contentTextSize.chat} dark={isDarkMode} />)}
                   <div ref={chatEndRef} />
                 </div>
               )}
