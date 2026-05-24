@@ -84,12 +84,15 @@ export function WelfarePanel({ items, intervalMs = 7000, onClose, compact = fals
   const steps = card.apply_steps.slice(0, 3)
 
   return (
-    <div className={`w-full ${compact ? 'flex h-full min-h-[260px] flex-col rounded-lg p-3.5' : 'rounded-2xl p-5'}`} style={colors.panel}>
-      <div className={`flex items-center justify-between ${compact ? 'mb-2' : 'mb-3'}`}>
-        <span className="text-[11px] font-black uppercase tracking-wider" style={{ color: colors.eyebrow }}>
+    <div
+      className={`w-full ${compact ? 'flex h-full min-h-[220px] flex-col rounded-lg p-3 sm:min-h-[260px] sm:p-3.5' : 'rounded-2xl p-5'}`}
+      style={colors.panel}
+    >
+      <div className={`flex items-start justify-between gap-2 ${compact ? 'mb-2' : 'mb-3'}`}>
+        <span className="min-w-0 flex-1 break-keep text-[10px] font-black leading-snug tracking-wide sm:text-[11px]" style={{ color: colors.eyebrow }}>
           상담 중 확인할 수 있는 복지 서비스
         </span>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <span className="text-xs font-semibold" style={{ color: colors.counter }}>
             {idx + 1} / {items.length}
           </span>
@@ -116,16 +119,16 @@ export function WelfarePanel({ items, intervalMs = 7000, onClose, compact = fals
         </div>
       </div>
 
-      <h3 className={`${compact ? 'line-clamp-1 text-base' : 'text-lg'} mb-1 font-black`} style={{ color: colors.title }}>
+      <h3 className={`${compact ? 'break-keep text-sm leading-snug sm:text-base' : 'text-lg'} mb-1 font-black`} style={{ color: colors.title }}>
         {card.title}
       </h3>
-      <p className={`${compact ? 'mb-3 line-clamp-4 text-sm' : 'mb-4 text-sm'} leading-relaxed`} style={{ color: colors.body }}>
+      <p className={`${compact ? 'mb-3 line-clamp-3 text-xs leading-relaxed sm:line-clamp-4 sm:text-sm' : 'mb-4 text-sm leading-relaxed'}`} style={{ color: colors.body }}>
         {card.summary}
       </p>
 
-      <div className={`flex items-center gap-3 ${compact ? 'mb-2' : 'mb-4'}`}>
+      <div className={`flex min-w-0 items-center gap-2 sm:gap-3 ${compact ? 'mb-2' : 'mb-4'}`}>
         <div
-          className={`${compact ? 'px-2.5 py-1.5 text-base' : 'px-3 py-2 text-xl'} rounded-lg font-black`}
+          className={`${compact ? 'shrink-0 px-2 py-1 text-sm sm:px-2.5 sm:py-1.5 sm:text-base' : 'px-3 py-2 text-xl'} rounded-lg font-black`}
           style={{
             background: colors.pillBg,
             border: `1px solid ${colors.pillBorder}`,
@@ -134,7 +137,7 @@ export function WelfarePanel({ items, intervalMs = 7000, onClose, compact = fals
         >
           전화 {card.phone}
         </div>
-        <div className="line-clamp-1 text-xs font-semibold" style={{ color: colors.muted }}>
+        <div className="min-w-0 break-keep text-[11px] font-semibold leading-snug sm:text-xs" style={{ color: colors.muted }}>
           {card.agency}
         </div>
       </div>
@@ -144,7 +147,7 @@ export function WelfarePanel({ items, intervalMs = 7000, onClose, compact = fals
           {steps.map((step, i) => (
             <li key={i} className="flex gap-2 text-xs" style={{ color: colors.body }}>
               <span
-                className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full text-[10px] font-black"
+                className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full text-[11px] font-black"
                 style={{
                   background: colors.stepBg,
                   color: colors.eyebrow,
@@ -152,18 +155,18 @@ export function WelfarePanel({ items, intervalMs = 7000, onClose, compact = fals
               >
                 {i + 1}
               </span>
-              <span className={`${compact ? 'line-clamp-2' : ''} leading-snug`}>{step}</span>
+              <span className={`${compact ? 'line-clamp-1 sm:line-clamp-2' : ''} min-w-5 break-keep leading-snug`}>{step}</span>
             </li>
           ))}
         </ol>
       )}
 
-      <div className="mt-auto flex items-center justify-between">
-        <a href={card.detail_link} target="_blank" rel="noreferrer" className="text-xs font-bold underline" style={{ color: colors.link }}>
+      <div className="mt-auto flex min-w-0 items-center justify-between gap-2">
+        <a href={card.detail_link} target="_blank" rel="noreferrer" className="min-w-0 break-keep text-xs font-bold underline" style={{ color: colors.link }}>
           복지로에서 자세히 보기
         </a>
         {items.length > 1 && (
-          <div className="flex gap-1.5">
+          <div className="flex shrink-0 gap-1.5">
             {items.map((_, i) => (
               <button
                 key={i}
