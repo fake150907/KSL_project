@@ -2,10 +2,12 @@ import type { ChatMessage as ChatMessageType } from '../types'
 
 interface ChatMessageProps {
   message: ChatMessageType
+  textClassName?: string
+  dark?: boolean
   /** 'citizen' messages align left, 'agent' messages align right */
 }
 
-export default function ChatMessage({ message }: ChatMessageProps) {
+export default function ChatMessage({ message, textClassName = 'text-sm', dark = false }: ChatMessageProps) {
   const isAgent = message.sender === 'agent'
   const time = message.timestamp.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
 
@@ -15,8 +17,8 @@ export default function ChatMessage({ message }: ChatMessageProps) {
       <div className={`
         flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold border
         ${isAgent
-          ? 'bg-[rgba(59,130,246,0.15)] border-[rgba(59,130,246,0.3)] text-blue-300'
-          : 'bg-[rgba(34,197,94,0.12)] border-[rgba(34,197,94,0.25)] text-green-400'}
+          ? dark ? 'bg-[#172b4a] border-[#2f5f9f] text-[#93c5fd]' : 'bg-[#eff6ff] border-[#bfdbfe] text-[#2563eb]'
+          : dark ? 'bg-[#123334] border-[#1f5f59] text-[#5eead4]' : 'bg-[#ecfdf5] border-[#a7f3d0] text-[#0f766e]'}
       `}>
         {isAgent
           ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
@@ -27,21 +29,21 @@ export default function ChatMessage({ message }: ChatMessageProps) {
       <div className={`flex min-w-0 max-w-[75%] flex-col gap-1 ${isAgent ? 'items-end' : 'items-start'}`}>
         {/* Label */}
         {message.label && (
-          <span className="text-[10px] font-semibold text-[#94a3b8] px-1">
+          <span className={`px-1 text-[10px] font-semibold ${dark ? 'text-[#8fa3bd]' : 'text-[#64748b]'}`}>
             {message.label}
           </span>
         )}
         {/* Bubble */}
         <div className={`
-          break-words px-3 py-2 rounded-2xl text-sm font-medium leading-relaxed
+          break-words px-3 py-2 rounded-2xl font-medium leading-relaxed ${textClassName}
           ${isAgent
-            ? 'bg-[rgba(37,99,235,0.75)] text-white rounded-tr-sm border border-[rgba(96,165,250,0.3)]'
-            : 'bg-[#22c55e] text-[#052e16] rounded-tl-sm'}
+            ? dark ? 'bg-[#2563eb] text-white rounded-tr-sm border border-[#60a5fa]/30 shadow-sm shadow-blue-950/20' : 'bg-[#2563eb] text-white rounded-tr-sm border border-[#93c5fd] shadow-sm shadow-blue-100'
+            : dark ? 'bg-[#14b8a6] text-[#042f2e] rounded-tl-sm shadow-sm shadow-teal-950/20' : 'bg-[#ccfbf1] text-[#134e4a] rounded-tl-sm border border-[#99f6e4] shadow-sm shadow-teal-50'}
         `}>
           {message.text}
         </div>
         {/* Time */}
-        <span className="text-[10px] text-[#64748b] px-1">{time}</span>
+        <span className={`px-1 text-[10px] ${dark ? 'text-[#8fa3bd]' : 'text-[#64748b]'}`}>{time}</span>
       </div>
     </div>
   )

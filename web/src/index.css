@@ -15,3 +15,40 @@ html, body, #root {
   overflow-y: auto;
   background: #ffffff;
 }
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.62) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.48);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.72);
+  background-clip: content-box;
+}
+
+[data-theme='dark'] * {
+  scrollbar-color: rgba(125, 143, 168, 0.58) transparent;
+}
+
+[data-theme='dark'] *::-webkit-scrollbar-thumb {
+  background: rgba(125, 143, 168, 0.44);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+}
