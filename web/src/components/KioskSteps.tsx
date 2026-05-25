@@ -1,5 +1,6 @@
 import HangulKeyboard from './HangulKeyboard'
 import Numpad from './Numpad'
+import SignLanguageLogo from './SignLanguageLogo'
 import { Header, Nav } from './KioskUI'
 import { formatPhone } from './hangul'
 import type { CitizenData, Step } from './hangul'
@@ -36,9 +37,7 @@ export function StepStart({ go }: Pick<StepProps, 'go'>) {
   return (
     <div className="h-full w-full flex flex-col items-center justify-center bg-white text-slate-900 overflow-hidden relative px-4">
       <div className="relative z-10 flex flex-col items-center gap-10 w-full max-w-lg">
-        <div className="w-20 h-20 rounded-[32px] bg-blue-600 flex items-center justify-center shadow-xl shadow-blue-100">
-          <svg className="w-10 h-10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-        </div>
+        <SignLanguageLogo className="h-20 w-20" />
         <div className="text-center">
           <h1 className="text-4xl font-black tracking-tight text-slate-800 mb-3">수어 통역 시스템</h1>
           <p className="text-slate-500 text-sm font-medium">민원인 접수 키오스크</p>
@@ -47,11 +46,7 @@ export function StepStart({ go }: Pick<StepProps, 'go'>) {
           onClick={() => go('name')} 
           className="group flex flex-row items-center gap-5 px-10 py-6 rounded-[22px] transition-all duration-200 active:scale-[0.97] shadow-lg bg-gradient-to-r from-[#0d6fb8] to-[#3cd3c1] w-full"
         >
-          <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center shrink-0">
-            <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5">
-              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-            </svg>
-          </div>
+          <SignLanguageLogo className="h-12 w-12 shadow-none" />
           <div className="text-left text-white">
             <div className="text-xl font-black">민원 상담 접수하기</div>
             <div className="text-sm font-semibold opacity-90 mt-0.5">개인정보 입력 후 대기실로 이동합니다</div>
