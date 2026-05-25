@@ -63,6 +63,7 @@ export default function CitizenKiosk({
   const [showDemoList, setShowDemoList] = useState(false)
   const [predictionLog, setPredictionLog] = useState<Array<{ label: string; confidence: number; timestamp: number }>>([])
   const [agentVoiceActive, setAgentVoiceActive] = useState(false)
+  const [agentVoiceLevels, setAgentVoiceLevels] = useState<number[]>(Array(42).fill(0.12))
 
   const handleNewMessageFromKiosk = useCallback((msg: ChatMessageType) => {
     onNewMessage(msg)                    // 자기 화면 업데이트
@@ -103,8 +104,11 @@ export default function CitizenKiosk({
   }, [onNewMessage])
 
   useEffect(() => {
-    const handleAgentVoiceStatus = (payload: { active?: boolean }) => {
+    const handleAgentVoiceStatus = (payload: { active?: boolean; levels?: number[] }) => {
       setAgentVoiceActive(!!payload?.active)
+      if (Array.isArray(payload?.levels) && payload.levels.length > 0) {
+        setAgentVoiceLevels(payload.levels)
+      }
     }
 
     socket.on('agent_voice_status', handleAgentVoiceStatus)
@@ -485,16 +489,28 @@ export default function CitizenKiosk({
       ? 'border-[#2563eb] bg-[#2563eb] text-white shadow-[0_0_16px_rgba(37,99,235,0.22)]'
       : 'border-[#0f766e] bg-[#0f766e] text-white shadow-[0_0_16px_rgba(15,118,110,0.24)]'
     const labelClass = tone === 'blue' ? (isDarkMode ? 'text-[#93c5fd]' : 'text-[#2563eb]') : (isDarkMode ? 'text-[#5eead4]' : 'text-[#0f766e]')
-    const steps = ['입력', '번역 중', '출력']
+    const steps = ['입력', '출력']
+    const displayStep = Math.min(activeStep, steps.length)
+    const arrowClass = tone === 'blue'
+      ? tone === 'blue' ? 'text-[#2563eb]' : 'text-[#0f766e]'
+      : isDarkMode ? 'text-[#111827]' : 'text-white'
 
     return (
       <div className={`rounded-lg border px-3 py-3 ${isDarkMode ? 'border-[#324155] bg-[#111827]' : 'border-[#d8e0ea] bg-white'}`}>
         <p className={`mb-3 text-center text-xs font-black ${labelClass}`}>{label}</p>
-        <div className="flex items-center justify-between gap-2">
+        <div className="grid grid-cols-[minmax(0,1fr)_2.25rem_minmax(0,1fr)] items-center gap-2 sm:grid-cols-[minmax(0,1fr)_2.75rem_minmax(0,1fr)]">
           {steps.map((step, index) => (
-            <div key={step} className="flex flex-1 items-center gap-2">
-              <div className="flex min-w-0 flex-1 flex-col items-center gap-1.5">
-                <span className={`flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-black transition-all duration-300 ${activeStep === index + 1 ? activeClass : isDarkMode ? 'border-[#40516a] bg-[#172235] text-slate-200' : 'border-[#cbd5e1] bg-white text-[#334155]'}`}>
+            <div key={step} className="contents">
+              {index === 1 && (
+                <div className="flex h-9 items-center justify-center">
+                  <svg className={`h-6 w-9 -mt-4 transition-colors duration-300 sm:w-11 ${arrowClass}`} viewBox="0 0 44 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M5 12h28" />
+                    <path d="m26 5 8 7-8 7" />
+                  </svg>
+                </div>
+              )}
+              <div className="flex min-w-0 flex-col items-center gap-1.5">
+                <span className={`flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-black transition-all duration-300 ${displayStep === index + 1 ? activeClass : isDarkMode ? 'border-[#40516a] bg-[#172235] text-slate-200' : 'border-[#cbd5e1] bg-white text-[#334155]'}`}>
                   {index + 1}
                 </span>
                 <span className={`text-[11px] font-bold ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{step}</span>
@@ -506,18 +522,20 @@ export default function CitizenKiosk({
     )
   }
 
-  const VoiceBars = ({ active }: { active: boolean }) => (
+  const VoiceBars = ({ active, levels }: { active: boolean; levels: number[] }) => (
     <div className="flex h-10 w-full max-w-[300px] items-center justify-center gap-1" aria-label="직원 음성 출력 상태">
-      {Array.from({ length: 42 }).map((_, index) => (
-        <span
-          key={index}
-          className={`w-1 rounded-full transition-all duration-300 ${active ? 'animate-pulse bg-emerald-500/80' : 'bg-slate-300'}`}
-          style={{
-            height: active ? `${9 + ((index * 11) % 28)}px` : `${6 + ((index * 5) % 10)}px`,
-            animationDelay: `${index * 28}ms`,
-          }}
-        />
-      ))}
+      {Array.from({ length: 42 }).map((_, index) => {
+        const level = levels[index % levels.length] ?? 0.12
+        const height = active ? Math.max(8, Math.round(level * 40)) : 8
+
+        return (
+          <span
+            key={index}
+            className={`w-1 rounded-full transition-all duration-100 ${active ? 'bg-[#14b8a6]' : 'bg-slate-300'}`}
+            style={{ height: `${height}px` }}
+          />
+        )
+      })}
     </div>
   )
 
@@ -577,7 +595,7 @@ export default function CitizenKiosk({
                 onClick={() => setWelfareThemeMode(mode)}
                 aria-label={`${label} 모드`}
                 title={`${label} 모드`}
-                className={`flex h-10 min-w-14 items-center justify-center border-r px-3 text-sm font-black transition-all last:border-r-0 active:scale-95 ${isDarkMode ? 'border-[#324155]' : 'border-[#d8e0ea]'} ${welfareThemeMode === mode ? (mode === 'dark' ? 'bg-[#0b1220] text-white shadow-inner' : 'bg-[#2563eb] text-white shadow-inner') : isDarkMode ? 'bg-[#111827] text-slate-100 hover:bg-[#1f2a3d]' : 'bg-white text-slate-700 hover:bg-[#f1f5f9]'}`}
+                className={`flex h-10 min-w-14 items-center justify-center border-r px-3 text-sm font-black transition-all last:border-r-0 active:scale-95 ${isDarkMode ? 'border-[#324155]' : 'border-[#d8e0ea]'} ${welfareThemeMode === mode ? (mode === 'dark' ? 'bg-[#2563eb] text-white shadow-inner' : 'bg-[#2563eb] text-white shadow-inner') : isDarkMode ? 'bg-[#111827] text-slate-100 hover:bg-[#1f2a3d]' : 'bg-white text-slate-700 hover:bg-[#f1f5f9]'}`}
               >
                 {label}
               </button>
@@ -683,10 +701,10 @@ export default function CitizenKiosk({
             <div className={`flex shrink-0 flex-col items-center justify-center gap-3 border-b px-5 py-4 text-center ${isDarkMode ? 'border-[#263244] bg-[#101827]' : 'border-[#d8e0ea] bg-[#f8fafc]'}`}>
               <p className={`text-base font-black ${agentVoiceActive ? (isDarkMode ? 'text-[#5eead4]' : 'text-[#0f766e]') : 'text-slate-500'}`}>{agentVoiceActive ? '직원이 음성 출력 중입니다' : '직원 음성 출력 대기 중입니다'}</p>
               <div className="flex w-full items-center justify-center gap-4">
-                <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-white shadow-lg transition-all ${agentVoiceActive ? 'scale-105 bg-[#0f766e] shadow-teal-500/20' : 'bg-slate-400 shadow-slate-100'}`}>
+                <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-white shadow-lg transition-all ${agentVoiceActive ? 'scale-105 bg-[#0f766e] shadow-teal-500/20' : 'bg-slate-400'}`}>
                   <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg>
                 </div>
-                <VoiceBars active={agentVoiceActive} />
+                <VoiceBars active={agentVoiceActive} levels={agentVoiceLevels} />
               </div>
             </div>
             <div ref={staffChatScrollRef} className={`min-h-0 flex-1 overflow-y-scroll overscroll-contain px-4 py-3 ${isDarkMode ? 'bg-[#121b2b]' : 'bg-white'}`}>

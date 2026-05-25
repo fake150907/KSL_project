@@ -129,6 +129,19 @@ export default function AgentDashboard({
   }, [messages])
 
   useEffect(() => {
+    socket.emit('agent_voice_status', { active: isSpeechActive })
+
+    return () => {
+      socket.emit('agent_voice_status', { active: false })
+    }
+  }, [isSpeechActive])
+
+  useEffect(() => {
+    if (!isSpeechActive) return
+    socket.emit('agent_voice_status', { active: true, levels: voiceLevels })
+  }, [isSpeechActive, voiceLevels])
+
+  useEffect(() => {
     const handleIncomingMessage = (msg: ChatMessageType) => onNewMessage(msg)
     socket.on('chat_message', handleIncomingMessage)
     return () => {
