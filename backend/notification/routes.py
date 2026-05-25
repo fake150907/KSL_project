@@ -4,31 +4,9 @@ from flask import Blueprint, jsonify, request
 
 from auth.routes import login_required
 from config import Config
-from notification.email_sender import send_email
 from notification.kakao_sender import KakaoAccessTokenError, refresh_kakao_access_token, send_kakao_message
 
 notification_bp = Blueprint("notification", __name__)
-
-
-@notification_bp.route("/api/notify/email", methods=["POST"])
-@login_required
-def notify_email():
-    data = request.get_json(silent=True) or {}
-    to_address = str(data.get("to", "")).strip()
-    summary = str(data.get("summary", "")).strip()
-
-    if not to_address or "@" not in to_address:
-        return jsonify({"error": "유효한 수신 이메일 주소가 필요합니다."}), 400
-    if not summary:
-        return jsonify({"error": "전송할 민원 상담 요약 내용이 없습니다."}), 400
-
-    try:
-        send_email(to_address, summary)
-        return jsonify({"message": f"메일 전송 완료: {to_address}"}), 200
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 500
-    except RuntimeError as exc:
-        return jsonify({"error": str(exc)}), 502
 
 
 @notification_bp.route("/api/notify/kakao", methods=["POST"])
@@ -59,12 +37,13 @@ def notify_kakao():
             access_token = refreshed["access_token"]
             send_kakao_message(access_token, summary)
 
-        payload = {"message": "카카오톡 나에게 보내기 완료"}
+        payload: dict[str, str] = {"message": "카카오톡 나에게 보내기 완료"}
         if refreshed.get("access_token"):
             payload["access_token"] = refreshed["access_token"]
         if refreshed.get("refresh_token"):
             payload["refresh_token"] = refreshed["refresh_token"]
         return jsonify(payload), 200
+
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 500
     except KakaoAccessTokenError as exc:

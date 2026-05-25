@@ -1,4 +1,7 @@
 from __future__ import annotations
+
+import anthropic
+
 from config import Config
 
 def summarize(conversation: list[str] | str) -> str:
@@ -14,34 +17,18 @@ def summarize(conversation: list[str] | str) -> str:
         raise RuntimeError("anthropic 패키지가 설치되어 있지 않습니다.") from exc
 
     prompt = _build_prompt(conversation)
-    
-    print("\n[DEBUG - ai_client.py] Claude API 통신 준비")
-    print(f"[DEBUG - ai_client.py] 사용할 모델: {Config.ANTHROPIC_MODEL}")
-    print(f"[DEBUG - ai_client.py] 프롬프트 길이: {len(prompt)}")
 
     try:
         client = anthropic.Anthropic(api_key=Config.ANTHROPIC_API_KEY)
-        print("[DEBUG - ai_client.py] Anthropic API에 요청 전송 중...")
-        
         message = client.messages.create(
             model=Config.ANTHROPIC_MODEL,
             max_tokens=900,
             messages=[{"role": "user", "content": prompt}],
         )
-        
-        print("[DEBUG - ai_client.py] Anthropic API 응답 수신 완료")
-        print(f"[DEBUG - ai_client.py] 원본 응답 객체: {message}")
-        
-        content = message.content[0]
-        text = getattr(content, "text", "")
-        
-        if not text.strip():
-            print("[DEBUG - ai_client.py] ❌ 경고: 반환된 텍스트가 비어있습니다.")
-            
+        text = getattr(message.content[0], "text", "")
         return text.strip()
-        
+
     except Exception as exc:
-        print(f"[DEBUG - ai_client.py] ❌ Claude 통신/처리 중 예외 발생: {exc}")
         raise RuntimeError(f"Claude 요약 실패: {exc}") from exc
 
 def _build_prompt(conversation: list[str]) -> str:
