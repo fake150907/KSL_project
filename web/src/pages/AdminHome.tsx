@@ -1,6 +1,6 @@
 import { type ReactNode, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BarChart3, LayoutDashboard, PlayCircle, ScrollText, Settings } from 'lucide-react'
+import { BarChart3, LayoutDashboard, PlayCircle, Power, Save, ScrollText, Settings, Wrench } from 'lucide-react'
 
 interface AdminHomeProps {
   onLogout: () => void
@@ -8,6 +8,22 @@ interface AdminHomeProps {
 }
 
 type AdminView = 'dashboard' | 'system' | 'statistics' | 'logs' | 'settings'
+
+type AdminSettings = {
+  branchName: string
+  installLocation: string
+  adminEmail: string
+  timezone: string
+}
+
+const ADMIN_SETTINGS_STORAGE_KEY = 'ksl_admin_settings'
+
+const defaultAdminSettings: AdminSettings = {
+  branchName: '서초동 이스트소프트',
+  installLocation: '1층 민원센터',
+  adminEmail: 'admin@example.com',
+  timezone: 'Asia/Seoul',
+}
 
 const navItems = [
   { id: 'dashboard', label: '대시보드', description: '운영 현황', Icon: LayoutDashboard },
@@ -24,10 +40,69 @@ const logs = [
   { id: 4, timestamp: '2026-05-10 09:05:55', level: 'success', source: 'Summary', message: '상담 요약 API 환경 확인 완료' },
 ] as const
 
+const crownPixels = [
+  '....................',
+  '..BB.....BB.....BB..',
+  '.BYYB...BYYB...BYYB.',
+  '.BYYB...BYYB...BYYB.',
+  '.BYYYB.BYYYYB.BYYYB.',
+  '.BYYYYBYYYYYYBYYYYB.',
+  '.BHYYYYYYYYYYYYYYYB.',
+  '.BHHYYYYYYYYYYYYYYB.',
+  '.BHYYYYYYYYYYYYYYYB.',
+  '.BBBBBBBBBBBBBBBBBB.',
+  '.BHHYYYYYYYYYYYYYYB.',
+  '. BBBBBBBBBBBBBBBB .',
+  '....................',
+] as const
+
+const crownPalette: Record<string, string> = {
+  B: '#3b1605',
+  Y: '#facc15',
+  H: '#fde047',
+  V: '#a855f7',
+}
+
+function loadAdminSettings(): AdminSettings {
+  if (typeof window === 'undefined') {
+    return defaultAdminSettings
+  }
+
+  try {
+    const stored = window.localStorage.getItem(ADMIN_SETTINGS_STORAGE_KEY)
+    if (!stored) {
+      return defaultAdminSettings
+    }
+
+    return { ...defaultAdminSettings, ...JSON.parse(stored) }
+  } catch {
+    return defaultAdminSettings
+  }
+}
+
+function PixelCrownIcon() {
+  return (
+    <div
+      className="grid h-8 w-10"
+      style={{ gridTemplateColumns: 'repeat(20, minmax(0, 1fr))', gridTemplateRows: 'repeat(13, minmax(0, 1fr))' }}
+      aria-hidden="true"
+    >
+      {crownPixels.join('').split('').map((cell, index) => (
+        <span
+          key={index}
+          style={{ backgroundColor: crownPalette[cell] ?? 'transparent' }}
+        />
+      ))}
+    </div>
+  )
+}
+
 export default function AdminHome({ onLogout, onSessionReset }: AdminHomeProps) {
   const navigate = useNavigate()
   const [view, setView] = useState<AdminView>('dashboard')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [adminSettings, setAdminSettings] = useState<AdminSettings>(() => loadAdminSettings())
+  const [settingsSaved, setSettingsSaved] = useState(false)
 
   const selectView = (next: AdminView) => {
     setView(next)
@@ -43,6 +118,16 @@ export default function AdminHome({ onLogout, onSessionReset }: AdminHomeProps) 
     navigate('/agent/launch')
   }
 
+  const updateAdminSetting = (key: keyof AdminSettings, value: string) => {
+    setAdminSettings((current) => ({ ...current, [key]: value }))
+    setSettingsSaved(false)
+  }
+
+  const saveAdminSettings = () => {
+    window.localStorage.setItem(ADMIN_SETTINGS_STORAGE_KEY, JSON.stringify(adminSettings))
+    setSettingsSaved(true)
+  }
+
   return (
     <main className="h-screen overflow-y-auto bg-[#111827] text-[#e5e7eb]">
       {sidebarOpen && <button className="fixed inset-0 z-40 bg-black/50 lg:hidden" onClick={() => setSidebarOpen(false)} aria-label="메뉴 닫기" />}
@@ -51,7 +136,9 @@ export default function AdminHome({ onLogout, onSessionReset }: AdminHomeProps) 
         <div className="flex h-full flex-col">
           <div className="flex h-16 items-center justify-between border-b border-[#374151] px-4">
             <div className="flex items-center gap-3">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#2563eb] text-sm font-black text-white">민</div>
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#2563eb] shadow-sm shadow-[#2563eb]/30">
+                <Wrench size={18} strokeWidth={2.4} className="text-white" />
+              </div>
               <span className="font-bold text-white">관리자 시스템</span>
             </div>
             <button onClick={() => setSidebarOpen(false)} className="rounded-lg px-2 py-1 text-[#9ca3af] hover:text-white lg:hidden">X</button>
@@ -81,7 +168,9 @@ export default function AdminHome({ onLogout, onSessionReset }: AdminHomeProps) 
 
           <div className="border-t border-[#374151] p-3">
             <button onClick={onLogout} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 font-medium text-[#ef4444] transition hover:bg-[#ef4444]/10">
-              <span className="flex h-8 w-8 items-center justify-center rounded-md bg-[#ef4444]/10">O</span>
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#dc2626] shadow-sm shadow-[#dc2626]/30">
+                <Power size={21} strokeWidth={2.8} className="text-white" />
+              </span>
               로그아웃
             </button>
           </div>
@@ -99,9 +188,11 @@ export default function AdminHome({ onLogout, onSessionReset }: AdminHomeProps) 
             <div className="ml-auto flex items-center gap-3">
               <div className="hidden text-right sm:block">
                 <p className="text-sm font-medium text-white">관리자</p>
-                <p className="text-xs text-[#9ca3af]">admin@system.com</p>
+                <p className="text-xs text-[#9ca3af]">{adminSettings.adminEmail}</p>
               </div>
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#2563eb] text-sm font-medium text-white">A</div>
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#2563eb] shadow-sm shadow-[#2563eb]/30">
+                <PixelCrownIcon />
+              </div>
             </div>
           </div>
         </header>
@@ -111,7 +202,14 @@ export default function AdminHome({ onLogout, onSessionReset }: AdminHomeProps) 
           {view === 'system' && <SystemView startCitizen={startCitizen} startAgent={startAgent} />}
           {view === 'statistics' && <StatisticsView />}
           {view === 'logs' && <LogsView />}
-          {view === 'settings' && <SettingsView />}
+          {view === 'settings' && (
+            <SettingsView
+              settings={adminSettings}
+              saved={settingsSaved}
+              onChange={updateAdminSetting}
+              onSave={saveAdminSettings}
+            />
+          )}
         </section>
       </div>
     </main>
@@ -233,16 +331,37 @@ function LogsView() {
   )
 }
 
-function SettingsView() {
+function SettingsView({
+  settings,
+  saved,
+  onChange,
+  onSave,
+}: {
+  settings: AdminSettings
+  saved: boolean
+  onChange: (key: keyof AdminSettings, value: string) => void
+  onSave: () => void
+}) {
   return (
     <div className="space-y-6">
-      <Header title="설정" description="민원 키오스크와 관리자 설정을 관리합니다." />
+      <Header title="설정" description="민원 어플리케이션과 관리자 설정을 관리합니다." />
       <Panel title="일반 설정">
         <div className="grid gap-4 md:grid-cols-2">
-          <TextSetting label="키오스크 이름" value="수어 민원 상담 키오스크" />
-          <TextSetting label="설치 위치" value="1층 민원센터" />
-          <TextSetting label="관리자 이메일" value="admin@example.com" />
-          <TextSetting label="시간대" value="Asia/Seoul" />
+          <TextSetting label="지점명" value={settings.branchName} onChange={(value) => onChange('branchName', value)} />
+          <TextSetting label="설치 위치" value={settings.installLocation} onChange={(value) => onChange('installLocation', value)} />
+          <TextSetting label="관리자 이메일" value={settings.adminEmail} onChange={(value) => onChange('adminEmail', value)} />
+          <TextSetting label="시간대" value={settings.timezone} onChange={(value) => onChange('timezone', value)} />
+        </div>
+        <div className="flex flex-col gap-3 pt-1 sm:flex-row sm:items-center sm:justify-end">
+          {saved && <span className="text-sm font-medium text-[#6ee7b7]">저장되었습니다.</span>}
+          <button
+            type="button"
+            onClick={onSave}
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#2563eb] px-4 text-sm font-semibold text-white transition hover:bg-[#1d4ed8]"
+          >
+            <Save size={16} strokeWidth={2.4} />
+            저장
+          </button>
         </div>
       </Panel>
     </div>
@@ -285,11 +404,15 @@ function ActionCard({ title, description, tone, onClick }: { title: string; desc
   )
 }
 
-function TextSetting({ label, value }: { label: string; value: string }) {
+function TextSetting({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
   return (
     <label className="block">
       <span className="text-sm font-medium text-[#e5e7eb]">{label}</span>
-      <input value={value} readOnly className="mt-2 h-11 w-full rounded-lg border border-[#374151] bg-[#374151] px-3 text-sm outline-none" />
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-2 h-11 w-full rounded-lg border border-[#374151] bg-[#374151] px-3 text-sm outline-none transition focus:border-[#2563eb] focus:ring-2 focus:ring-[#2563eb]/30"
+      />
     </label>
   )
 }
