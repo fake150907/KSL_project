@@ -336,7 +336,7 @@ export default function AgentDashboard({
                   key={mode}
                   type="button"
                   onClick={() => setWelfareThemeMode(mode)}
-                  className={`flex h-10 min-w-14 items-center justify-center border-r px-3 text-sm font-black transition-all last:border-r-0 active:scale-95 ${isDarkMode ? 'border-[#324155]' : 'border-[#d8e0ea]'} ${welfareThemeMode === mode ? (mode === 'dark' ? 'bg-[#0b1220] text-white shadow-inner' : 'bg-[#2563eb] text-white shadow-inner') : isDarkMode ? 'bg-[#111827] text-slate-100 hover:bg-[#1f2a3d]' : 'bg-white text-slate-700 hover:bg-[#f1f5f9]'}`}
+                  className={`flex h-10 min-w-14 items-center justify-center border-r px-3 text-sm font-black transition-all last:border-r-0 active:scale-95 ${isDarkMode ? 'border-[#324155]' : 'border-[#d8e0ea]'} ${welfareThemeMode === mode ? 'bg-[#2563eb] text-white shadow-inner' : isDarkMode ? 'bg-[#111827] text-slate-100 hover:bg-[#1f2a3d]' : 'bg-white text-slate-700 hover:bg-[#f1f5f9]'}`}
                 >
                   {mode === 'light' ? '라이트' : '다크'}
                 </button>
@@ -456,13 +456,13 @@ export default function AgentDashboard({
             </div>
           </div>
 
-          <div ref={chatListRef} className="min-h-[200px] max-h-[420px] overflow-y-auto overscroll-auto px-4 py-5">
+          <div ref={chatListRef} className={`min-h-[200px] max-h-[420px] overflow-y-auto overscroll-auto px-4 py-5 transition-colors duration-300 ${isDarkMode ? 'bg-[#121b2b]' : 'bg-white'}`}>
             {messages.length === 0 ? (
               <div className={`flex h-full items-center justify-center text-center text-sm font-bold ${isDarkMode ? 'text-slate-600' : 'text-slate-300'}`}>
                 상담이 시작되면 민원인 발화와 상담원 응답이 여기에 기록됩니다.
               </div>
             ) : (
-              messages.map((message) => <ChatMessage key={message.id} message={message} />)
+              messages.map((message) => <ChatMessage key={message.id} message={message} dark={isDarkMode} />)
             )}
           </div>
         </section>
@@ -498,7 +498,7 @@ export default function AgentDashboard({
                 className={`h-36 w-full min-w-0 resize-none rounded-lg border p-4 text-base font-bold leading-relaxed outline-none ${isDarkMode ? 'border-[#334155] bg-[#0f172a] text-slate-100 placeholder:text-slate-500 focus:border-blue-500' : 'border-slate-200 bg-white focus:border-blue-500'}`}
               />
               <div className="grid gap-2 sm:grid-cols-2">
-                <button onClick={sendReply} disabled={!replyInput.trim()} className="whitespace-normal rounded-lg bg-blue-600 px-4 py-3 text-sm font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-200">
+                <button onClick={sendReply} disabled={!replyInput.trim()} className={`whitespace-normal rounded-lg px-4 py-3 text-sm font-black text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed ${replyInput.trim() ? 'bg-blue-600' : isDarkMode ? 'bg-[#334155] text-slate-500' : 'bg-blue-200'}`}>
                   전송
                 </button>
                 <button onClick={isSpeechActive ? stopSpeech : startSpeech} className={`whitespace-normal break-words rounded-lg border px-4 py-3 text-sm font-black ${isSpeechActive ? (isDarkMode ? 'border-amber-700 bg-amber-900/40 text-amber-400' : 'border-amber-200 bg-amber-50 text-amber-700') : (isDarkMode ? 'border-[#334155] bg-[#0f172a] text-slate-200 hover:bg-[#1e293b]' : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100')}`}>
