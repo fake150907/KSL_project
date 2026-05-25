@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { AgentNote } from '../types'
 import { registerRole, socket } from '../socket'
+import SignLanguageLogo from '../components/SignLanguageLogo'
 
 interface ConsultationRecord {
   id: string
@@ -35,18 +36,6 @@ const TAG_STYLES: Record<AgentNote['tag'], string> = {
   문의: 'bg-blue-50 text-blue-700 border-blue-200',
   확인: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   처리: 'bg-violet-50 text-violet-700 border-violet-200',
-}
-
-function ServiceLogo({ className = '' }: { className?: string }) {
-  return (
-    <div className={`relative flex items-center justify-center rounded-[28%] bg-blue-600 shadow-xl shadow-blue-100 ${className}`}>
-      <svg viewBox="0 0 120 120" className="h-[72%] w-[72%]" aria-hidden="true">
-        <path d="M65 20c6 0 10 5 10 12v24h3V28c0-6 4-10 9-10s9 4 9 10v43c0 20-16 36-36 36H50c-18 0-32-14-32-32V45c0-6 4-10 9-10s9 4 9 10v16h3V31c0-6 4-10 9-10s9 4 9 10v28h3V32c0-7 4-12 10-12z" fill="#FDE2C8" />
-        <path d="M36 62V45M51 59V31M63 58V32M77 56V28" stroke="#F4B58D" strokeWidth="5" strokeLinecap="round" />
-        <path d="M44 82c10 11 31 12 42-2" stroke="#E9A27A" strokeWidth="6" strokeLinecap="round" fill="none" />
-      </svg>
-    </div>
-  )
 }
 
 export default function AgentLaunchScreen({ onSessionReset }: AgentLaunchScreenProps) {
@@ -173,7 +162,7 @@ export default function AgentLaunchScreen({ onSessionReset }: AgentLaunchScreenP
 
       <header className="relative z-10 flex items-center justify-between border-b border-slate-200 bg-white/85 px-4 py-4 backdrop-blur md:px-8">
         <div className="flex items-center gap-3">
-          <ServiceLogo className="h-14 w-14 md:h-16 md:w-16" />
+          <SignLanguageLogo className="h-14 w-14 md:h-16 md:w-16" />
           <div>
             <h1 className="text-xl font-black tracking-tight md:text-2xl">수어 통역 상담원 화면</h1>
             <p className="text-sm font-bold text-slate-500">민원센터 실시간 수어 통역 상담</p>
@@ -189,7 +178,7 @@ export default function AgentLaunchScreen({ onSessionReset }: AgentLaunchScreenP
 
       <main className="relative z-10 flex flex-1 flex-col items-center justify-center gap-10 overflow-y-auto px-4 py-8">
         <div className="flex flex-col items-center text-center">
-          <ServiceLogo className="h-36 w-36 md:h-44 md:w-44" />
+          <SignLanguageLogo className="h-36 w-36 md:h-44 md:w-44" />
           <h2 className="mt-8 text-4xl font-black tracking-tight text-slate-950 md:text-6xl">수어 통역 상담 시스템</h2>
           <p className="mt-4 text-base font-semibold text-slate-500 md:text-xl">실시간 민원 상담 및 수어 통역 관리</p>
         </div>
