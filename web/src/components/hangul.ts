@@ -20,6 +20,21 @@ export function formatPhone(val: string): string {
   return `${d.slice(0,3)}-${d.slice(3,7)}-${d.slice(7)}`
 }
 
+export function maskName(val: string): string {
+  const name = val.trim()
+  if (name.length <= 1) return name
+  if (name.length === 2) return `${name[0]}x`
+  return `${name[0]}${'x'.repeat(name.length - 2)}${name[name.length - 1]}`
+}
+
+export function maskPhone(val: string): string {
+  const d = val.replace(/\D/g, '').slice(0, 11)
+  if (d.length <= 3) return d
+  if (d.length <= 7) return `${d.slice(0, 3)}-${'*'.repeat(d.length - 3)}`
+  const middleLength = d.length === 10 ? 3 : 4
+  return `${d.slice(0, 3)}-${'*'.repeat(middleLength)}-${d.slice(3 + middleLength)}`
+}
+
 export interface CitizenData {
   name:   string
   dob:    string

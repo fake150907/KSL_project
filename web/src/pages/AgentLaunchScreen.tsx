@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import type { AgentNote } from '../types'
 import { registerRole, socket } from '../socket'
 import SignLanguageLogo from '../components/SignLanguageLogo'
+import { maskName, maskPhone } from '../components/hangul'
 
 interface ConsultationRecord {
   id: string
@@ -197,7 +198,7 @@ export default function AgentLaunchScreen({ onSessionReset }: AgentLaunchScreenP
               </div>
               <div>
                 <h3 className="text-2xl font-black text-slate-950 md:text-3xl">민원인이 도착했습니다</h3>
-                <p className="mt-2 text-lg font-bold text-slate-500">{citizenData?.name || '민원인'} 대기 중</p>
+                <p className="mt-2 text-lg font-bold text-slate-500">{maskName(citizenData?.name || '민원인')} 대기 중</p>
               </div>
               <button onClick={handleEnter} className="w-full rounded-2xl bg-blue-600 py-5 text-lg font-black text-white shadow-lg shadow-blue-100 hover:bg-blue-700 active:scale-[0.99]">
                 상담 시작하기
@@ -236,10 +237,10 @@ export default function AgentLaunchScreen({ onSessionReset }: AgentLaunchScreenP
               ) : selectedRecord ? (
                 <article className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
                   <div className="grid gap-3 text-sm font-bold text-slate-700 md:grid-cols-2">
-                    <p><span className="text-slate-400">민원인:</span> {selectedRecord.citizenName}</p>
+                    <p><span className="text-slate-400">민원인:</span> {maskName(selectedRecord.citizenName)}</p>
                     <p><span className="text-slate-400">상담 시간:</span> {formatDateTimeRange(selectedRecord.date, selectedRecord.endDate)}</p>
                     <p><span className="text-slate-400">성별:</span> {selectedRecord.citizenGender}</p>
-                    <p><span className="text-slate-400">연락처:</span> {selectedRecord.citizenPhone || '미입력'}</p>
+                    <p><span className="text-slate-400">연락처:</span> {selectedRecord.citizenPhone ? maskPhone(selectedRecord.citizenPhone) : '미입력'}</p>
                   </div>
                   <section className="mt-6">
                     <h4 className="text-lg font-black">상담 내용 요약</h4>
@@ -273,7 +274,7 @@ export default function AgentLaunchScreen({ onSessionReset }: AgentLaunchScreenP
                       className="flex w-full flex-col gap-3 rounded-2xl border border-slate-100 bg-white p-5 text-left shadow-sm hover:border-blue-200 md:flex-row md:items-center md:justify-between"
                     >
                       <div>
-                        <p className="text-lg font-black text-slate-950">{record.citizenName}</p>
+                        <p className="text-lg font-black text-slate-950">{maskName(record.citizenName)}</p>
                         <p className="mt-1 text-sm font-bold text-slate-500">{formatDateTimeRange(record.date, record.endDate)}</p>
                         <p className="mt-2 line-clamp-1 text-sm font-semibold text-slate-500">{record.notes.map((note) => note.text).join(' / ') || '작성된 메모 없음'}</p>
                       </div>

@@ -2,7 +2,7 @@ import HangulKeyboard from './HangulKeyboard'
 import Numpad from './Numpad'
 import SignLanguageLogo from './SignLanguageLogo'
 import { Header, Nav } from './KioskUI'
-import { formatPhone } from './hangul'
+import { formatPhone, maskName, maskPhone } from './hangul'
 import type { CitizenData, Step } from './hangul'
 
 export interface StepProps {
@@ -139,13 +139,16 @@ export function StepPhone({ data, setData, go }: StepProps) {
 
 // 6. 확인
 export function StepConfirm({ data, go, onFinish }: StepProps) {
+  const maskedName = maskName(data.name)
+  const maskedPhone = maskPhone(data.phone)
+
   return (
     <div className="h-full w-full flex flex-col bg-white text-slate-900 overflow-hidden relative">
       <Header step="confirm" />
       <div className="flex-1 flex flex-col items-center justify-center gap-8 px-10 py-6 overflow-y-auto">
         <h2 className="text-2xl font-black text-slate-800">입력하신 정보가 맞습니까?</h2>
         <div className="w-full max-w-[400px] flex flex-col gap-5 p-8 rounded-3xl bg-slate-50 border border-slate-200 shadow-sm">
-          {[ ['이름', data.name], ['생년월일', data.dob], ['성별', data.gender], ['연락처', formatPhone(data.phone)] ].map(([l, v]) => (
+          {[ ['이름', maskedName], ['생년월일', data.dob], ['성별', data.gender], ['연락처', maskedPhone] ].map(([l, v]) => (
             <div key={l} className="flex justify-between items-center border-b border-slate-200 pb-4 last:border-0 last:pb-0">
               <span className="text-sm font-bold text-slate-500">{l}</span>
               <span className={`text-xl font-black ${l === '연락처' ? 'text-blue-600' : 'text-slate-800'}`}>{v}</span>
@@ -166,7 +169,7 @@ export function StepWaiting({ data }: StepProps) {
         <div className="absolute inset-0 rounded-full border-4 border-slate-100 border-t-blue-500 animate-spin" />
         <svg className="w-10 h-10" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" strokeWidth="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
       </div>
-      <h2 className="text-3xl font-black text-slate-800 mb-2">{data.name}님, 환영합니다</h2>
+      <h2 className="text-3xl font-black text-slate-800 mb-2">{maskName(data.name)}님, 환영합니다</h2>
       <p className="text-slate-500 text-sm font-medium">상담원이 곧 입장할 예정입니다</p>
       <div className="mt-8 px-5 py-2.5 rounded-full bg-emerald-50 border border-emerald-100 text-emerald-600 font-bold text-sm">상담원 대기실에 알림 전송됨</div>
     </div>

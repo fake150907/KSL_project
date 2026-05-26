@@ -6,6 +6,7 @@ import ChatMessage from '../components/ChatMessage'
 import { useSignLanguage, validationDemoScenarios, type DemoScenario } from '../hooks/useSignLanguage'
 import { useWelfarePanel } from '../hooks/useWelfarePanel'
 import { WelfarePanel } from '../components/WelfarePanel'
+import { maskName, maskPhone } from '../components/hangul'
 import { socket, registerRole } from '../socket'
 
 interface CitizenKioskProps {
@@ -50,6 +51,8 @@ export default function CitizenKiosk({
 
   const actualCitizenName = activeCitizenData?.name || citizenName
   const actualCitizenPhone = activeCitizenData?.phone || citizenPhone
+  const maskedCitizenName = maskName(actualCitizenName)
+  const maskedCitizenPhone = maskPhone(actualCitizenPhone)
 
   const chatEndRef = useRef<HTMLDivElement>(null)
   const staffChatScrollRef = useRef<HTMLDivElement>(null)
@@ -561,7 +564,7 @@ export default function CitizenKiosk({
       <header className={`z-10 flex flex-shrink-0 items-center justify-between border-b px-6 py-3 shadow-sm transition-colors duration-300 ${isDarkMode ? 'border-[#263244] bg-[#121b2b]' : 'border-[#d8e0ea] bg-white'}`}>
         <div className="flex flex-col gap-0.5">
           <span className={`text-xl font-black tracking-tight ${isDarkMode ? 'text-slate-50' : 'text-[#172033]'}`}>수어 통역 키오스크</span>
-          <span className={`inline-block w-fit rounded-md px-2 py-0.5 text-sm font-bold ${isDarkMode ? 'bg-[#1e3a5f] text-[#bfdbfe]' : 'bg-[#eaf2ff] text-[#2563eb]'}`}>{roomLabel} - {actualCitizenName}님</span>
+          <span className={`inline-block w-fit rounded-md px-2 py-0.5 text-sm font-bold ${isDarkMode ? 'bg-[#1e3a5f] text-[#bfdbfe]' : 'bg-[#eaf2ff] text-[#2563eb]'}`}>{roomLabel} - {maskedCitizenName}님</span>
         </div>
         <div className="flex items-center gap-4">
           <div className={`flex items-center overflow-hidden rounded-lg border shadow-sm ${isDarkMode ? 'border-[#324155] bg-[#172235]' : 'border-[#d8e0ea] bg-[#f8fafc]'}`}>
@@ -736,8 +739,8 @@ export default function CitizenKiosk({
             <p className="text-sm text-slate-500 text-center font-medium">등록하신 휴대전화로<br/>상담 대화 내역을 보내드릴까요?</p>
             
             <div className="flex flex-col items-center justify-center rounded-xl mt-4 mb-5 w-full py-3 bg-slate-50 border-2 border-slate-100 shadow-inner">
-              <span className="text-xs text-slate-400 font-bold mb-1">{actualCitizenName}님의 연락처</span>
-              <div className="text-xl font-black text-slate-800 tracking-wider">{formatPhone(actualCitizenPhone)}</div>
+              <span className="text-xs text-slate-400 font-bold mb-1">{maskedCitizenName}님의 연락처</span>
+              <div className="text-xl font-black text-slate-800 tracking-wider">{maskedCitizenPhone}</div>
             </div>
             
             <div className="flex flex-col w-full gap-2">
