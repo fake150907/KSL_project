@@ -24,7 +24,7 @@ function RequireAuth({ isAuthenticated, children }: { isAuthenticated: boolean; 
   const location = useLocation()
 
   if (!isAuthenticated) {
-    return <Navigate to="/" replace state={{ from: location.pathname }} />
+    return <Navigate to="/" replace state={{ from: `${location.pathname}${location.search}${location.hash}` }} />
   }
 
   return children
