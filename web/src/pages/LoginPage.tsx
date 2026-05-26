@@ -1,5 +1,5 @@
 import { FormEvent, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 interface LoginPageProps {
   onLogin: () => void
@@ -7,6 +7,7 @@ interface LoginPageProps {
 
 export default function LoginPage({ onLogin }: LoginPageProps) {
   const navigate = useNavigate()
+  const location = useLocation()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -20,6 +21,9 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
     const cleanUsername = username.trim()
     const cleanPassword = password.trim()
+    const redirectPath = typeof (location.state as { from?: unknown } | null)?.from === 'string'
+      ? (location.state as { from: string }).from
+      : '/admin'
 
     try {
       // 💡 동적 IP 자동 감지 적용
@@ -32,7 +36,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
       if (response.ok || (cleanUsername === 'admin' && cleanPassword === 'admin1234')) {
         onLogin()
-        navigate('/admin')
+        navigate(redirectPath, { replace: true })
         return
       }
 
@@ -42,7 +46,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       console.error("로그인 에러:", err)
       if (cleanUsername === 'admin' && cleanPassword === 'admin1234') {
         onLogin()
-        navigate('/admin')
+        navigate(redirectPath, { replace: true })
         return
       }
       setError('백엔드 연결을 확인해 주세요. 데모 계정은 admin / admin1234 입니다.')
