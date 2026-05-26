@@ -11,6 +11,7 @@ from flask import Blueprint, Response, jsonify, request, send_from_directory
 from auth.routes import login_required
 from config import Config
 from inference.model_loader import ensure_models_loaded
+import inference.model_state as model_state
 from inference.model_state import (
     GLOSS_TO_TEXT_MIN_INTERVAL_SECONDS,
     cv2,
@@ -169,7 +170,7 @@ def predict():
         ensure_models_loaded()
         if cv2 is None or Image is None or np is None:
             return jsonify({"error": "Vision dependencies not installed"}), 503
-        if mp_holistic_instance is None:
+        if model_state.mp_holistic_instance is None:
             return jsonify({"error": "MediaPipe not available"}), 503
 
         force_finalize  = request.form.get("force_finalize", "false").lower() in {"true", "1", "yes"}
@@ -184,7 +185,7 @@ def predict():
         client_id           = request.form.get("client_id", "default")
         frame_id            = request.form.get("frame_id", "")
         seq_len             = int(_config["data"]["sequence_length"])
-        confidence_threshold = float(request.form.get("confidence_threshold", _config.get("realtime", {}).get("confidence_threshold", 0.35)))
+        confidence_threshold = float(request.form.get("confidence_threshold", _config.get("realtime", {}).get("confidence_threshold", 0.10)))
         window_size         = max(8, min(int(request.form.get("window_size", _config.get("realtime", {}).get("window_size", seq_len))), seq_len))
         stable_min_count    = int(request.form.get("stable_min_count", _config.get("realtime", {}).get("stable_min_count", 2)))
         max_missing_frames  = int(request.form.get("max_missing_frames", _config.get("realtime", {}).get("max_missing_frames", 3)))
@@ -231,8 +232,14 @@ def predict():
                         pred["scenario"] = dual
                         if dual.get("scenario_text"):
                             pred["scenario_text"] = dual["scenario_text"]
+                        # 임시 디버그 로그 추가
+                        print(f"[dual] word={dual.get('word', {}).get('label')} word_conf={dual.get('word', {}).get('confidence', 0):.3f}")
+                        print(f"[dual] sen={dual.get('sentence', {}).get('label')} sen_conf={dual.get('sentence', {}).get('confidence', 0):.3f}")
+                        print(f"[dual] lookup_hit={dual.get('lookup_hit')} scenario_text={dual.get('scenario_text')}")
+                        print(f"[dual] fusion_candidates={dual.get('fusion_candidates', [])[:2]}")
                     except Exception as exc:
                         pred["scenario_error"] = str(exc)
+                        print(f"[dual] error: {exc}")
                 if label and conf >= confidence_threshold:
                     pred["label"] = label
                     pred["below_threshold"] = False
@@ -265,7 +272,7 @@ def predict():
             ph, pw = img_rgb.shape[:2]
 
             with mp_holistic_lock:
-                results = mp_holistic_instance.process(img_rgb)
+                results = model_state.mp_holistic_instance.process(img_rgb)
 
             has_hand = bool(results.left_hand_landmarks or results.right_hand_landmarks)
             has_pose = bool(results.pose_landmarks)
@@ -306,6 +313,17 @@ def predict():
                     prediction["window_progress"] = len(window)
 
         prediction["process_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+        if prediction.get("segment_finalized"):
+            print(
+                f"[predict] finalized"
+                f" label={prediction.get('label')}"
+                f" raw_label={prediction.get('raw_label')}"
+                f" confidence={prediction.get('confidence', 0):.3f}"
+                f" frames={prediction.get('segment_frames')}"
+                f" scenario_mode={scenario_mode}"
+                f" scenario={prediction.get('scenario', {}).get('lookup_key') if prediction.get('scenario') else None}"
+                f" top={prediction.get('top_predictions', [])[:2]}"
+            )
         return jsonify({"prediction": prediction, "frame_id": frame_id}), 200
 
     except Exception as exc:

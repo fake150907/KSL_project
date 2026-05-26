@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -31,7 +33,7 @@ app.register_blueprint(summary_bp)
 app.register_blueprint(welfare_bp)
 
 if __name__ == "__main__":
-    from inference.model_loader import load_models
-    load_models()
+    from inference.model_loader import ensure_models_loaded
+    ensure_models_loaded()
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=False, host="0.0.0.0", port=port, use_reloader=False, threaded=True)
