@@ -205,12 +205,9 @@ export function useSignLanguage(
     const envMode = import.meta.env.VITE_MEDIAPIPE_AB_MODE
     const storedMode = localStorage.getItem(MEDIAPIPE_MODE_STORAGE_KEY)
     const rawMode = mediaPipeProcessingMode || queryMode || storedMode || envMode || 'server'
-    const clientModeEnabled = import.meta.env.VITE_ENABLE_CLIENT_MEDIAPIPE === 'true'
-    const normalizedMode = rawMode === 'client' && clientModeEnabled ? 'client' : 'server'
+    const normalizedMode = rawMode === 'client' ? 'client' : 'server'
     if (queryMode === 'client' || queryMode === 'server') {
       localStorage.setItem(MEDIAPIPE_MODE_STORAGE_KEY, normalizedMode)
-    } else if (storedMode === 'client' && normalizedMode === 'server') {
-      localStorage.setItem(MEDIAPIPE_MODE_STORAGE_KEY, 'server')
     }
     return normalizedMode
   })()
@@ -467,12 +464,8 @@ export function useSignLanguage(
     const key = getScenarioLookupKey(prediction)
     const parts = key.split('+').map((item) => item.trim()).filter(Boolean)
     if (parts.length === 0) return false
-    const next = [...demoGlossBufferRef.current]
-parts.forEach((part) => {
-  if (next[next.length - 1] !== part) next.push(part)
-})
-demoGlossBufferRef.current = next
-return true
+    parts.forEach((part) => commitRecognizedWord(part))
+    return true
   }, [commitRecognizedWord])
 
   const convertDemoGlossToText = useCallback(async (scenario: DemoScenario) => {
@@ -1516,12 +1509,9 @@ return true
       if (shouldCommitScenarioText(data.prediction) && commitScenarioText(data.prediction.scenario_text)) {
         return
       }
-      const isForceScenarioDemo =
-  isDemoModeRef.current && demoScenarioRef.current?.forceScenarioMode
-
-if (!isForceScenarioDemo && pred.label && pred.confidence >= confidenceThreshold) {
-  commitRecognizedWord(pred.display_label || pred.label)
-}
+      if (pred.label && pred.confidence >= confidenceThreshold) {
+        commitRecognizedWord(pred.display_label || pred.label)
+      }
       return
     }
 

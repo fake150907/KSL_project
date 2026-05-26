@@ -5,6 +5,7 @@ import type { ChatMessage as ChatMessageType, AgentNote } from '../types'
 import ChatMessage from '../components/ChatMessage'
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition'
 import { registerRole, socket } from '../socket'
+import { maskName } from '../components/hangul'
 
 interface AgentDashboardProps {
   messages: ChatMessageType[]
@@ -89,6 +90,7 @@ export default function AgentDashboard({
   const citizenDob = activeCitizenData?.dob || propCitizenDob || '미입력'
   const citizenGender = activeCitizenData?.gender || propCitizenGender || '미입력'
   const citizenPhone = activeCitizenData?.phone || propCitizenPhone || ''
+  const maskedCitizenName = maskName(citizenName)
 
   const [videoConnected, setVideoConnected] = useState(false)
   const [notes, setNotes] = useState<AgentNote[]>([])
@@ -326,7 +328,7 @@ export default function AgentDashboard({
           <div className="min-w-0">
             <p className="break-words text-xs font-black uppercase tracking-[0.18em] text-blue-600 sm:tracking-[0.24em]">Civil Sign Interpreter</p>
             <h1 className={`mt-1 break-words text-xl font-black tracking-tight md:text-2xl ${isDarkMode ? 'text-slate-50' : 'text-slate-950'}`}>수어 통역 상담원 화면</h1>
-            <p className={`break-words text-sm font-semibold ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{citizenName} 민원인 상담 중</p>
+            <p className={`break-words text-sm font-semibold ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{maskedCitizenName} 민원인 상담 중</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className={`flex items-center overflow-hidden rounded-lg border shadow-sm ${isDarkMode ? 'border-[#324155] bg-[#172235]' : 'border-[#d8e0ea] bg-[#f8fafc]'}`}>
