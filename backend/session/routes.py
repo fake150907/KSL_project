@@ -4,6 +4,7 @@ import time
 
 from flask import Blueprint, jsonify, request
 
+from auth.routes import login_required
 from session.store import (
     add_message,
     clear_citizen_session,
@@ -18,7 +19,9 @@ from session.store import (
 
 session_bp = Blueprint("session", __name__)
 
+
 @session_bp.route("/api/citizen-session", methods=["GET", "POST", "DELETE"])
+@login_required
 def api_citizen_session():
     if request.method == "GET":
         return jsonify(get_citizen_session()), 200
@@ -36,7 +39,9 @@ def api_citizen_session():
 
     return jsonify(set_citizen_session(citizen_data)), 200
 
+
 @session_bp.route("/api/messages", methods=["GET", "POST", "DELETE"])
+@login_required
 def api_messages():
     if request.method == "GET":
         return jsonify({"messages": get_messages()}), 200
@@ -67,7 +72,9 @@ def api_messages():
 
     return jsonify({"message": result}), 200
 
+
 @session_bp.route("/api/session-state", methods=["GET", "POST", "DELETE"])
+@login_required
 def api_session_state():
     if request.method == "GET":
         return jsonify(get_session_state()), 200
