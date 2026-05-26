@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import type { ReactElement } from 'react'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import type { ChatMessage } from './types'
 import LoginPage from './pages/LoginPage'
 import AdminHome from './pages/AdminHome'
@@ -17,6 +18,16 @@ const AUTH_KEY = 'ksl-admin-authenticated'
 
 type IncomingChatMessage = Omit<ChatMessage, 'timestamp'> & {
   timestamp: Date | string | number
+}
+
+function RequireAuth({ isAuthenticated, children }: { isAuthenticated: boolean; children: ReactElement }) {
+  const location = useLocation()
+
+  if (!isAuthenticated) {
+    return <Navigate to="/" replace state={{ from: location.pathname }} />
+  }
+
+  return children
 }
 
 const normalizeTimestamp = (timestamp: Date | string | number | null | undefined) => {
@@ -165,35 +176,51 @@ export default function App() {
       <Route
         path="/admin"
         element={
-          isAuthenticated ? (
+          <RequireAuth isAuthenticated={isAuthenticated}>
             <AdminHome onLogout={handleLogout} onSessionReset={handleSessionReset} />
-          ) : (
-            <Navigate to="/" replace />
-          )
+          </RequireAuth>
         }
       />
-      <Route path="/agent/launch" element={<AgentLaunchScreen onSessionReset={handleSessionReset} />} />
+      <Route
+        path="/agent/launch"
+        element={
+          <RequireAuth isAuthenticated={isAuthenticated}>
+            <AgentLaunchScreen onSessionReset={handleSessionReset} />
+          </RequireAuth>
+        }
+      />
       <Route
         path="/agent"
         element={
-          <AgentDashboard
-            messages={messages}
-            onNewMessage={handleNewMessage}
-            onSessionEnd={handleSessionEnd}
-            onSessionReset={handleSessionReset}
-          />
+          <RequireAuth isAuthenticated={isAuthenticated}>
+            <AgentDashboard
+              messages={messages}
+              onNewMessage={handleNewMessage}
+              onSessionEnd={handleSessionEnd}
+              onSessionReset={handleSessionReset}
+            />
+          </RequireAuth>
         }
       />
-      <Route path="/kiosk" element={<KioskLaunchScreen />} />
+      <Route
+        path="/kiosk"
+        element={
+          <RequireAuth isAuthenticated={isAuthenticated}>
+            <KioskLaunchScreen />
+          </RequireAuth>
+        }
+      />
       <Route
         path="/kiosk/session"
         element={
-          <CitizenKiosk
-            messages={messages}
-            onNewMessage={handleNewMessage}
-            onSessionReset={handleSessionReset}
-            sessionEnded={sessionEnded}
-          />
+          <RequireAuth isAuthenticated={isAuthenticated}>
+            <CitizenKiosk
+              messages={messages}
+              onNewMessage={handleNewMessage}
+              onSessionReset={handleSessionReset}
+              sessionEnded={sessionEnded}
+            />
+          </RequireAuth>
         }
       />
       <Route path="/citizen" element={<Navigate to="/kiosk" replace />} />
