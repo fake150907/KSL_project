@@ -17,11 +17,29 @@ from inference.model_state import (
     torch,
 )
 
+import sys
+
 # KSL_project/backend/inference/model_loader.py 기준
 BACKEND_DIR  = Path(__file__).resolve().parents[1]  # KSL_project/backend/
 PROJECT_ROOT = BACKEND_DIR.parent                   # KSL_project/
-HANDOVER_DIR = PROJECT_ROOT / "web_handover"        # KSL_project/
 ROOT_DIR     = PROJECT_ROOT  # legacy fallback 함수에서 사용
+
+def _find_handover_dir(root: Path) -> Path:
+    candidates = [
+        root / "web_handover",
+        root / "web_handover" / "web_handover",
+    ]
+    for c in candidates:
+        if (c / "models").exists():
+            return c
+    return root / "web_handover"
+
+HANDOVER_DIR = _find_handover_dir(PROJECT_ROOT)
+
+# cnngru_attn.py import를 위해 code/ 경로 추가
+_HANDOVER_CODE_DIR = HANDOVER_DIR / "code"
+if _HANDOVER_CODE_DIR.exists() and str(_HANDOVER_CODE_DIR) not in sys.path:
+    sys.path.insert(0, str(_HANDOVER_CODE_DIR))
 
 MODEL_FILES = {
     "word_v2":     HANDOVER_DIR / "models" / "word_stage2.pt",
@@ -133,22 +151,28 @@ def load_label_display_map() -> dict[str, str]:
 # ── lookup table 로드 ─────────────────────────────────────────────
 
 def load_lookup_table() -> dict[str, str]:
-    """핸드오버 lookup_table.json → {sen_id: 자연어 표현} 단순 매핑."""
-    # 핸드오버 lookup (우선)
-    if LOOKUP_TABLE_PATH.exists():
-        with LOOKUP_TABLE_PATH.open("r", encoding="utf-8") as f:
-            raw = json.load(f)
-        tbl = raw.get("lookup_table", raw)
-        return {k: v["label"] if isinstance(v, dict) else str(v) for k, v in tbl.items()}
+    merged: dict[str, str] = {}
 
-    # fallback: 기존 inference/scenario_lookup.json
     legacy = Path(__file__).resolve().parent / "scenario_lookup.json"
     if legacy.exists():
-        with legacy.open("r", encoding="utf-8") as f:
-            raw = json.load(f)
-        return {k: v for k, v in raw.items() if not k.startswith("_")}
-    return {}
+        try:
+            with legacy.open("r", encoding="utf-8") as f:
+                raw = json.load(f)
+            merged.update({k: v for k, v in raw.items() if not k.startswith("_")})
+        except Exception as exc:
+            print(f"[model_loader] legacy lookup load failed: {exc}")
 
+    if LOOKUP_TABLE_PATH.exists():
+        try:
+            with LOOKUP_TABLE_PATH.open("r", encoding="utf-8") as f:
+                raw = json.load(f)
+            tbl = raw.get("lookup_table", raw)
+            merged.update({k: v["label"] if isinstance(v, dict) else str(v) for k, v in tbl.items()})
+        except Exception as exc:
+            print(f"[model_loader] handover lookup load failed: {exc}")
+
+    print(f"[lookup] total={len(merged)} sample={list(merged.keys())[:10]}")
+    return merged
 
 # ── temperature 로드 ──────────────────────────────────────────────
 

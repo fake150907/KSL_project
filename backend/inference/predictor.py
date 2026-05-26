@@ -270,31 +270,37 @@ def predict_dual_scenario(
         if raw_wlbl in state.SCENARIO_WORD_IDS and float(best_wrd.get("score") or 0.0) < 0.75 and float(best_sen.get("score") or 0.0) >= float(best_wrd.get("score") or 0.0) * 0.35:
             lookup_candidates = [best_sen, *[x for x in lookup_candidates if x is not best_sen]]
 
-    # pair vs single 우선순위 조정
+    # pair vs single 우선순위 조정 (강화된 threshold)
+# SEN0354(안녕하세요), SEN0355(감사합니다)는 standalone으로 보호
+    _PROTECTED_SEN = {"SEN0354", "SEN0355"}
+
     pair_cands = [x for x in lookup_candidates if x.get("source") == "word_sentence_pair"]
     if pair_cands:
         best_single_score = max((float(x.get("score") or 0.0) for x in lookup_candidates if x.get("source") != "word_sentence_pair"), default=0.0)
         best_pair = pair_cands[0]
+        pair_sen_label = str((best_pair.get("sentence") or {}).get("label") or "")
+        pair_blocked = pair_sen_label in _PROTECTED_SEN
         if (
+            not pair_blocked and
             float((best_pair.get("word") or {}).get("confidence") or 0.0) >= 0.12 and
             float((best_pair.get("sentence") or {}).get("confidence") or 0.0) >= 0.12 and
-            float(best_pair.get("score") or 0.0) >= best_single_score * 0.55
+            float(best_pair.get("score") or 0.0) >= best_single_score * 1.05
         ):
             lookup_candidates = [best_pair, *[x for x in lookup_candidates if x is not best_pair]]
 
-    out["fusion_candidates"] = lookup_candidates[:5]
-    if lookup_candidates:
-        best = lookup_candidates[0]
-        out["scenario_text"] = best["text"]
-        out["lookup_hit"]    = True
-        out["lookup_key"]    = best["key"]
-        out["lookup_source"] = best["source"]
-        out["lookup_score"]  = best["score"]
-    else:
-        out["scenario_text"] = None
-        out["lookup_hit"]    = False
+        out["fusion_candidates"] = lookup_candidates[:5]
+        if lookup_candidates:
+            best = lookup_candidates[0]
+            out["scenario_text"] = best["text"]
+            out["lookup_hit"]    = True
+            out["lookup_key"]    = best["key"]
+            out["lookup_source"] = best["source"]
+            out["lookup_score"]  = best["score"]
+        else:
+            out["scenario_text"] = None
+            out["lookup_hit"]    = False
 
-    return out
+        return out
 
 def landmarks_payload_to_frame(landmarks: dict[str, Any]) -> Any:
     if np is None:
