@@ -1,8 +1,10 @@
-"""Keypoint helpers for fixed MediaPipe xyz sequences.
+"""Keypoint helpers for fixed MediaPipe sequences.
 
 The current project standard is:
-pose33 + left_hand21 + right_hand21, each point as [x, y, z].
-That yields 75 points and 225 flattened features per frame.
+pose33 + left_hand21 + right_hand21.
+
+WORD uses [x, y, z] per point: 75 x 3 = 225 features.
+SENTENCE v2 uses [x, y, z, c] per point: 75 x 4 = 300 features.
 """
 
 from __future__ import annotations
@@ -18,6 +20,9 @@ HAND_POINTS = 21
 TOTAL_POINTS = POSE_POINTS + HAND_POINTS + HAND_POINTS
 FEATURE_DIMS = 3
 FEATURE_COUNT = TOTAL_POINTS * FEATURE_DIMS
+SENTENCE_FEATURE_DIMS = 4
+SENTENCE_FEATURE_COUNT = TOTAL_POINTS * SENTENCE_FEATURE_DIMS
+SENTENCE_T_MAX = 128
 LEFT_SHOULDER = 11
 RIGHT_SHOULDER = 12
 
@@ -68,21 +73,27 @@ def extract_frames(record: Any) -> list[np.ndarray]:
     return [points] if points.size else []
 
 
-def _fit_frame_to_layout(frame: np.ndarray) -> np.ndarray:
-    fixed = np.zeros((TOTAL_POINTS, FEATURE_DIMS), dtype=np.float32)
+def _fit_frame_to_layout(frame: np.ndarray, feature_dims: int = FEATURE_DIMS) -> np.ndarray:
+    fixed = np.zeros((TOTAL_POINTS, feature_dims), dtype=np.float32)
     if frame.size == 0:
         return fixed
     current = np.nan_to_num(frame.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
     if current.ndim == 1:
-        current = current.reshape(-1, FEATURE_DIMS)
-    cols = min(FEATURE_DIMS, current.shape[1])
+        source_dims = feature_dims
+        if current.size % feature_dims != 0:
+            source_dims = SENTENCE_FEATURE_DIMS if current.size % SENTENCE_FEATURE_DIMS == 0 else FEATURE_DIMS
+        current = current.reshape(-1, source_dims)
+    cols = min(feature_dims, current.shape[1])
     rows = min(TOTAL_POINTS, current.shape[0])
     fixed[:rows, :cols] = current[:rows, :cols]
+    if feature_dims >= SENTENCE_FEATURE_DIMS and current.shape[1] < SENTENCE_FEATURE_DIMS:
+        valid_xyz = np.any(fixed[:rows, :FEATURE_DIMS] != 0.0, axis=1)
+        fixed[:rows, 3] = valid_xyz.astype(np.float32)
     return fixed
 
 
-def normalize_frame(frame: np.ndarray) -> np.ndarray:
-    frame = _fit_frame_to_layout(frame)
+def normalize_frame(frame: np.ndarray, feature_dims: int = FEATURE_DIMS) -> np.ndarray:
+    frame = _fit_frame_to_layout(frame, feature_dims=feature_dims)
     left = frame[LEFT_SHOULDER].copy()
     right = frame[RIGHT_SHOULDER].copy()
 
@@ -96,7 +107,7 @@ def normalize_frame(frame: np.ndarray) -> np.ndarray:
 
     valid = np.any(frame != 0.0, axis=1)
     normalized = frame.copy()
-    normalized[valid] = (normalized[valid] - center) / scale
+    normalized[valid, :FEATURE_DIMS] = (normalized[valid, :FEATURE_DIMS] - center[:FEATURE_DIMS]) / scale
     normalized[~valid] = 0.0
     return normalized
 
@@ -106,54 +117,77 @@ def sequence_to_tensor(
     sequence_length: int,
     feature_dims: int = FEATURE_DIMS,
     normalize: bool = True,
+    normalize_mode: str | None = None,
+    pad_mode: str = "repeat",
+    resample: bool = True,
 ) -> np.ndarray:
+    feature_count = TOTAL_POINTS * feature_dims
     if not frames:
-        return np.zeros((sequence_length, FEATURE_COUNT), dtype=np.float32)
+        return np.zeros((sequence_length, feature_count), dtype=np.float32)
 
     frame_features: list[np.ndarray] = []
     for frame in frames:
-        current = _fit_frame_to_layout(frame)
-        if normalize:
-            current = normalize_frame(current)
+        current = _fit_frame_to_layout(frame, feature_dims=feature_dims)
+        should_normalize = normalize and str(normalize_mode or "").lower() not in {"none", "false", "0"}
+        if should_normalize:
+            current = normalize_frame(current, feature_dims=feature_dims)
         frame_features.append(current[:, :feature_dims].reshape(-1))
 
     seq = np.stack(frame_features).astype(np.float32)
     if len(seq) == sequence_length:
         return seq
     if len(seq) > sequence_length:
+        if not resample:
+            return seq[:sequence_length]
         indices = np.linspace(0, len(seq) - 1, sequence_length).round().astype(int)
         return seq[indices]
 
-    last = seq[-1:]
-    pad = np.repeat(last, sequence_length - len(seq), axis=0)
+    if pad_mode == "zero":
+        pad = np.zeros((sequence_length - len(seq), feature_count), dtype=np.float32)
+    else:
+        last = seq[-1:]
+        pad = np.repeat(last, sequence_length - len(seq), axis=0)
     return np.concatenate([seq, pad], axis=0)
 
 
-def mediapipe_landmarks_to_frame(results: Any) -> np.ndarray:
+def mediapipe_landmarks_to_frame(results: Any, layout: str = "mediapipe_xyz") -> np.ndarray:
+    use_confidence = layout in {"mediapipe_xyzc", "xyzc", "sentence_v2"}
     points: list[list[float]] = []
     pose_landmarks = getattr(results, "pose_landmarks", None)
     if pose_landmarks is None:
-        points.extend([[0.0, 0.0, 0.0] for _ in range(POSE_POINTS)])
+        points.extend([[0.0, 0.0, 0.0, 0.0] if use_confidence else [0.0, 0.0, 0.0] for _ in range(POSE_POINTS)])
     else:
-        pose_points = [
-            [float(lm.x), float(lm.y), float(lm.z)]
-            for lm in pose_landmarks.landmark[:POSE_POINTS]
-        ]
+        if use_confidence:
+            pose_points = [
+                [float(lm.x), float(lm.y), float(lm.z), float(getattr(lm, "visibility", 1.0) or 0.0)]
+                for lm in pose_landmarks.landmark[:POSE_POINTS]
+            ]
+        else:
+            pose_points = [
+                [float(lm.x), float(lm.y), float(lm.z)]
+                for lm in pose_landmarks.landmark[:POSE_POINTS]
+            ]
         while len(pose_points) < POSE_POINTS:
-            pose_points.append([0.0, 0.0, 0.0])
+            pose_points.append([0.0, 0.0, 0.0, 0.0] if use_confidence else [0.0, 0.0, 0.0])
         points.extend(pose_points)
 
     for attr in ("left_hand_landmarks", "right_hand_landmarks"):
         landmarks = getattr(results, attr, None)
         if landmarks is None:
-            points.extend([[0.0, 0.0, 0.0] for _ in range(HAND_POINTS)])
+            points.extend([[0.0, 0.0, 0.0, 0.0] if use_confidence else [0.0, 0.0, 0.0] for _ in range(HAND_POINTS)])
         else:
-            hand_points = [
-                [float(lm.x), float(lm.y), float(lm.z)]
-                for lm in landmarks.landmark[:HAND_POINTS]
-            ]
+            if use_confidence:
+                hand_points = [
+                    [float(lm.x), float(lm.y), float(lm.z), 1.0]
+                    for lm in landmarks.landmark[:HAND_POINTS]
+                ]
+            else:
+                hand_points = [
+                    [float(lm.x), float(lm.y), float(lm.z)]
+                    for lm in landmarks.landmark[:HAND_POINTS]
+                ]
             while len(hand_points) < HAND_POINTS:
-                hand_points.append([0.0, 0.0, 0.0])
+                hand_points.append([0.0, 0.0, 0.0, 0.0] if use_confidence else [0.0, 0.0, 0.0])
             points.extend(hand_points)
 
     return np.asarray(points, dtype=np.float32)

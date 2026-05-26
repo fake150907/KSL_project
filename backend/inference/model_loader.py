@@ -49,7 +49,30 @@ MODEL_FILES = {
 # label map / lookup / temperature — web_handover 폴더 기준
 LABEL_MAP_WORD_PATH     = HANDOVER_DIR / "labels"      / "label_map_word.json"
 LABEL_MAP_SENTENCE_PATH = HANDOVER_DIR / "labels"      / "label_map_sentence.json"
+LABEL_MAP_WORD_CANDIDATES = [
+    LABEL_MAP_WORD_PATH,
+    HANDOVER_DIR / "labels" / "label_map_word_v2.json",
+    HANDOVER_DIR / "labels" / "label_map+word+v2.json",
+    ROOT_DIR / "model_results" / "label_map_word_id_3000.json",
+]
+LABEL_MAP_SENTENCE_CANDIDATES = [
+    LABEL_MAP_SENTENCE_PATH,
+    HANDOVER_DIR / "labels" / "label_map_sentence_v2.json",
+    HANDOVER_DIR / "labels" / "label_map+sentence+v2.json",
+    ROOT_DIR / "model_results" / "label_map_sentence_v2.json",
+    ROOT_DIR / "model_results" / "label_map+sentence+v2.json",
+    ROOT_DIR / "model_results" / "label_map_sen_id_2000.json",
+]
+DISPLAY_LABEL_WORD_CANDIDATES = [
+    HANDOVER_DIR / "labels" / "idx_to_label_3000.json",
+    ROOT_DIR / "model_results" / "idx_to_label_3000.json",
+]
+DISPLAY_LABEL_SENTENCE_CANDIDATES = [
+    HANDOVER_DIR / "labels" / "idx_to_label_sen_2000.json",
+    ROOT_DIR / "model_results" / "idx_to_label_sen_2000.json",
+]
 LOOKUP_TABLE_PATH       = HANDOVER_DIR / "lookup"      / "lookup_table.json"
+BACKEND_LOOKUP_TABLE_PATH = Path(__file__).resolve().parent / "lookup_table.json"
 TEMPERATURE_WORD_PATH   = HANDOVER_DIR / "calibration" / "temperature_word.txt"
 TEMPERATURE_SENTENCE_PATH = HANDOVER_DIR / "calibration" / "temperature_sentence.txt"
 
@@ -81,8 +104,10 @@ def _normalize_label_map(raw: Any) -> dict[int, str]:
 
 def load_word_label_map() -> list[str]:
     """WORD label map → class_id 순서대로 정렬된 label 리스트."""
-    if LABEL_MAP_WORD_PATH.exists():
-        with LABEL_MAP_WORD_PATH.open("r", encoding="utf-8") as f:
+    for path in LABEL_MAP_WORD_CANDIDATES:
+        if not path.exists():
+            continue
+        with path.open("r", encoding="utf-8") as f:
             raw = json.load(f)
         id_to_label = _normalize_label_map(raw)
         return [id_to_label[i] for i in sorted(id_to_label)]
@@ -92,8 +117,10 @@ def load_word_label_map() -> list[str]:
 
 def load_sentence_label_map() -> list[str]:
     """SENTENCE label map → class_id 순서대로 정렬된 label 리스트."""
-    if LABEL_MAP_SENTENCE_PATH.exists():
-        with LABEL_MAP_SENTENCE_PATH.open("r", encoding="utf-8") as f:
+    for path in LABEL_MAP_SENTENCE_CANDIDATES:
+        if not path.exists():
+            continue
+        with path.open("r", encoding="utf-8") as f:
             raw = json.load(f)
         id_to_label = _normalize_label_map(raw)
         return [id_to_label[i] for i in sorted(id_to_label)]
@@ -142,9 +169,10 @@ def load_label_display_map() -> dict[str, str]:
         except Exception as exc:
             print(f"[model_loader] display map load failed ({path}): {exc}")
 
-    _try(ROOT_DIR / "model_results" / "idx_to_label_3000.json",        ["word_id"], ["label"])
-    _try(ROOT_DIR / "model_results" / "idx_to_label_sen_2000.json",    ["sen_id", "label_id"], ["label", "text"], sen_offset=True)
-    _try(ROOT_DIR / "model_results" / "idx_to_label_sen_scenario12.json", ["sen_id", "label"], ["display", "text"])
+    for path in DISPLAY_LABEL_WORD_CANDIDATES:
+        _try(path, ["word_id"], ["label"])
+    for path in DISPLAY_LABEL_SENTENCE_CANDIDATES:
+        _try(path, ["sen_id", "label_id"], ["label", "text"], sen_offset=True)
     return display
 
 
@@ -162,14 +190,16 @@ def load_lookup_table() -> dict[str, str]:
         except Exception as exc:
             print(f"[model_loader] legacy lookup load failed: {exc}")
 
-    if LOOKUP_TABLE_PATH.exists():
+    for path in (BACKEND_LOOKUP_TABLE_PATH, LOOKUP_TABLE_PATH):
+        if not path.exists():
+            continue
         try:
-            with LOOKUP_TABLE_PATH.open("r", encoding="utf-8") as f:
+            with path.open("r", encoding="utf-8") as f:
                 raw = json.load(f)
             tbl = raw.get("lookup_table", raw)
             merged.update({k: v["label"] if isinstance(v, dict) else str(v) for k, v in tbl.items()})
         except Exception as exc:
-            print(f"[model_loader] handover lookup load failed: {exc}")
+            print(f"[model_loader] lookup load failed ({path}): {exc}")
 
     print(f"[lookup] total={len(merged)} sample={list(merged.keys())[:10]}")
     return merged
@@ -270,8 +300,8 @@ def load_models() -> None:
             smooth_landmarks=True,
             enable_segmentation=False,
             refine_face_landmarks=False,
-            min_detection_confidence=0.3,
-            min_tracking_confidence=0.3,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5,
         )
         state.mp_drawing = mp.solutions.drawing_utils
         print("[model_loader] MediaPipe loaded")

@@ -613,7 +613,7 @@ export default function CitizenKiosk({
 
       <div className={`min-h-0 flex-1 overflow-y-auto p-3 transition-colors duration-300 md:p-5 ${isDarkMode ? 'bg-[#0f172a]' : 'bg-[#f5f7fb]'}`}>
         <div className="mx-auto grid min-h-full w-full max-w-[1280px] grid-cols-1 gap-3 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(300px,1fr)_minmax(260px,0.78fr)_minmax(300px,1fr)]">
-          <section className={`order-1 flex min-h-[560px] flex-col overflow-hidden rounded-lg border shadow-sm transition-colors duration-300 lg:h-full lg:min-h-0 ${isDarkMode ? 'border-[#2b3a50] bg-[#121b2b]' : 'border-[#c9d7ee] bg-white'}`}>
+          <section className={`order-1 flex min-h-[560px] flex-col overflow-hidden rounded-lg border-[3px] shadow-sm transition-colors duration-300 lg:h-full lg:min-h-0 ${isDarkMode ? 'border-[#2b3a50] bg-[#121b2b]' : 'border-[#c9d7ee] bg-white'}`}>
             <div className="bg-[#2563eb] px-4 py-3 text-center text-base font-black text-white">민원인 (수어 입력)</div>
             <div className={`min-h-0 flex-1 p-3 ${isDarkMode ? 'bg-[#0f172a]' : 'bg-[#f3f6fb]'}`}>
               <div className={`relative h-full min-h-[270px] overflow-hidden rounded-lg border bg-black ${isDarkMode ? 'border-[#334155]' : 'border-[#d8e0ea]'}`}>
@@ -673,7 +673,7 @@ export default function CitizenKiosk({
             </div>
           </section>
 
-          <section className={`order-2 flex min-h-[430px] flex-col overflow-hidden rounded-lg border shadow-sm transition-colors duration-300 lg:h-full lg:min-h-0 ${isDarkMode ? 'border-[#263244] bg-[#121b2b]' : 'border-[#d8e0ea] bg-white'}`}>
+          <section className={`order-2 flex min-h-[430px] flex-col overflow-hidden rounded-lg border-[3px] shadow-sm transition-colors duration-300 lg:h-full lg:min-h-0 ${isDarkMode ? 'border-[#263244] bg-[#121b2b]' : 'border-[#d8e0ea] bg-white'}`}>
             <div className={`border-b px-4 py-3 text-center text-base font-black ${isDarkMode ? 'border-[#263244] text-slate-50' : 'border-[#d8e0ea] text-[#172033]'}`}>통역 상태</div>
             <div className={`flex shrink-0 flex-col gap-3 border-b px-4 py-4 ${isDarkMode ? 'border-[#263244]' : 'border-[#d8e0ea]'}`}>
               {renderStepLane('blue', '민원인 수어 입력 흐름', citizenStep)}
@@ -696,7 +696,7 @@ export default function CitizenKiosk({
             </div>
           </section>
 
-          <section className={`order-3 flex min-h-[430px] flex-col overflow-hidden rounded-lg border shadow-sm transition-colors duration-300 lg:h-full lg:min-h-0 ${isDarkMode ? 'border-[#24433f] bg-[#121b2b]' : 'border-[#b9e4d4] bg-white'}`}>
+          <section className={`order-3 flex min-h-[430px] flex-col overflow-hidden rounded-lg border-[3px] shadow-sm transition-colors duration-300 lg:h-full lg:min-h-0 ${isDarkMode ? 'border-[#24433f] bg-[#121b2b]' : 'border-[#b9e4d4] bg-white'}`}>
             <div className="bg-[#0f766e] px-4 py-3 text-center text-base font-black text-white">직원 (음성 출력)</div>
             <div className={`flex shrink-0 flex-col items-center justify-center gap-3 border-b px-5 py-4 text-center ${isDarkMode ? 'border-[#263244] bg-[#101827]' : 'border-[#d8e0ea] bg-[#f8fafc]'}`}>
               <p className={`text-base font-black ${agentVoiceActive ? (isDarkMode ? 'text-[#5eead4]' : 'text-[#0f766e]') : 'text-slate-500'}`}>{agentVoiceActive ? '직원이 음성 출력 중입니다' : '직원 음성 출력 대기 중입니다'}</p>

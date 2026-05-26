@@ -1,0 +1,274 @@
+{
+  "description": "수어 인식 운영 시나리오 Lookup Table (32 entry) — 시나리오 turn 단위 정답 매핑",
+  "source": "사용자 통합본 (주민센터_민원_수어_시나리오_통합본.md) 시나리오 1 (복지카드 분실 11턴)",
+  "usage": "turn 흐름 안에서 top5 안에 lookup key가 있으면 그 lookup value(한국어 자연어 표현)로 출력. 가중치는 시나리오 score function용.",
+  "lookup_table": {
+    "SEN0354": {
+      "label": "안녕하세요",
+      "weight": 0.5
+    },
+    "SEN0355": {
+      "label": "감사합니다",
+      "weight": 0.5
+    },
+    "SEN0278": {
+      "label": "지하철에서 잃어버렸어요",
+      "weight": 1.0
+    },
+    "SEN0279": {
+      "label": "지하철에서 잃어버렸어요",
+      "weight": 1.0
+    },
+    "SEN0322": {
+      "label": "잃어버리다 (복지카드/물건 합성)",
+      "weight": 1.5
+    },
+    "SEN1817": {
+      "label": "카드 잃어버리다",
+      "weight": 1.5
+    },
+    "SEN0169": {
+      "label": "신분증 (있다)",
+      "weight": 2.0
+    },
+    "SEN0170": {
+      "label": "신분증 (있다)",
+      "weight": 2.0
+    },
+    "SEN0175": {
+      "label": "여기 있다",
+      "weight": 0.5
+    },
+    "SEN0176": {
+      "label": "여기 있다",
+      "weight": 0.5
+    },
+    "SEN0049": {
+      "label": "장애인복지카드",
+      "weight": 1.5
+    },
+    "SEN0050": {
+      "label": "장애인복지카드",
+      "weight": 1.5
+    },
+    "SEN0109": {
+      "label": "가능",
+      "weight": 1.0
+    },
+    "SEN0110": {
+      "label": "가능",
+      "weight": 1.0
+    },
+    "SEN0173": {
+      "label": "잠깐 기다리다",
+      "weight": 0.5
+    },
+    "SEN0298": {
+      "label": "잠깐 기다리다",
+      "weight": 0.5
+    },
+    "SEN0299": {
+      "label": "잠깐 기다리다 괜찮다",
+      "weight": 0.5
+    },
+    "SEN0181": {
+      "label": "도움받다",
+      "weight": 1.0
+    },
+    "SEN0182": {
+      "label": "도움받다 가능",
+      "weight": 1.0
+    },
+    "SEN0187": {
+      "label": "괜찮다",
+      "weight": 0.5
+    },
+    "SEN0188": {
+      "label": "괜찮다",
+      "weight": 0.5
+    },
+    "SEN0193": {
+      "label": "확인",
+      "weight": 1.0
+    },
+    "SEN0194": {
+      "label": "확인 가능",
+      "weight": 1.0
+    },
+    "SEN0145": {
+      "label": "없다",
+      "weight": 1.0
+    },
+    "SEN0146": {
+      "label": "없다",
+      "weight": 1.0
+    },
+    "SEN0336": {
+      "label": "무엇",
+      "weight": 1.0
+    },
+    "SEN0340": {
+      "label": "어떻게",
+      "weight": 1.0
+    },
+    "SEN0470": {
+      "label": "지갑 잃어버리다",
+      "weight": 1.0
+    },
+    "SEN1032": {
+      "label": "돈 얼마",
+      "weight": 1.0
+    },
+    "SEN1033": {
+      "label": "돈주다 얼마",
+      "weight": 1.0
+    },
+    "SEN1771": {
+      "label": "맞다",
+      "weight": 0.5
+    },
+    "SEN1772": {
+      "label": "맞다",
+      "weight": 0.5
+    }
+  },
+  "critical_sen_ids": {
+    "SEN0169": {
+      "label": "신분증",
+      "weight": 2.0
+    },
+    "SEN0170": {
+      "label": "신분증",
+      "weight": 2.0
+    },
+    "SEN0322": {
+      "label": "잃어버리다",
+      "weight": 1.5
+    },
+    "SEN1817": {
+      "label": "잃어버리다",
+      "weight": 1.5
+    },
+    "SEN0049": {
+      "label": "장애인복지카드",
+      "weight": 2.0
+    },
+    "SEN0050": {
+      "label": "장애인복지카드",
+      "weight": 2.0
+    },
+    "SEN0470": {
+      "label": "지갑 잃어버리다",
+      "weight": 1.5
+    }
+  },
+  "scenario_turns": [
+    {
+      "turn": 1,
+      "label": "안녕하세요",
+      "weight": 0.5,
+      "sen_ids": [
+        "SEN0354"
+      ],
+      "word_required": false
+    },
+    {
+      "turn": 2,
+      "label": "복지카드+잃어버리다",
+      "weight": 1.5,
+      "sen_ids": [
+        "SEN0322"
+      ],
+      "word_required": true,
+      "word_note": "WORD0579 합성"
+    },
+    {
+      "turn": 3,
+      "label": "어떻게",
+      "weight": 1.0,
+      "sen_ids": [
+        "SEN0340"
+      ],
+      "word_required": false
+    },
+    {
+      "turn": 4,
+      "label": "신분증+여기 있다",
+      "weight": 1.0,
+      "sen_ids": [
+        "SEN0169",
+        "SEN0175"
+      ],
+      "word_required": false,
+      "word_note": "두 SEN 합성"
+    },
+    {
+      "turn": 5,
+      "label": "잠깐 기다리다",
+      "weight": 1.0,
+      "sen_ids": [
+        "SEN0173",
+        "SEN0298"
+      ],
+      "word_required": false
+    },
+    {
+      "turn": 6,
+      "label": "확인 가능",
+      "weight": 1.0,
+      "sen_ids": [
+        "SEN0194"
+      ],
+      "word_required": false
+    },
+    {
+      "turn": 7,
+      "label": "지하철 안 없다",
+      "weight": 1.0,
+      "sen_ids": [
+        "SEN0278",
+        "SEN0279"
+      ],
+      "word_required": false
+    },
+    {
+      "turn": 8,
+      "label": "돈 얼마",
+      "weight": 1.0,
+      "sen_ids": [
+        "SEN1032"
+      ],
+      "word_required": false
+    },
+    {
+      "turn": 9,
+      "label": "면제+가능",
+      "weight": 2.0,
+      "sen_ids": [
+        "SEN0109",
+        "SEN0110"
+      ],
+      "word_required": true,
+      "word_note": "WORD0602 합성"
+    },
+    {
+      "turn": 10,
+      "label": "괜찮다",
+      "weight": 0.5,
+      "sen_ids": [
+        "SEN0187",
+        "SEN0188"
+      ],
+      "word_required": false
+    },
+    {
+      "turn": 11,
+      "label": "감사합니다",
+      "weight": 0.5,
+      "sen_ids": [
+        "SEN0355"
+      ],
+      "word_required": false
+    }
+  ]
+}

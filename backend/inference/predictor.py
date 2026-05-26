@@ -12,6 +12,9 @@ from inference.model_state import (
     torch,
     sequence_to_tensor,
 )
+
+SENTENCE_T_MAX = 128
+SENTENCE_FEATURE_DIMS = 4
 def softmax(x: Any) -> Any:
     x = x - np.max(x)
     exp = np.exp(x)
@@ -152,6 +155,18 @@ def frames_to_model_tensor(model_type: str, frames: list, sequence_length: int) 
         tensor = align_tensor_features(tensor, int(model.input_size))
     return tensor
 
+def frames_to_sentence_v2_tensor(frames: list) -> tuple[Any, int]:
+    valid_length = max(1, min(len(frames), SENTENCE_T_MAX))
+    tensor = sequence_to_tensor(
+        frames,
+        SENTENCE_T_MAX,
+        feature_dims=SENTENCE_FEATURE_DIMS,
+        normalize=True,
+        pad_mode="zero",
+        resample=False,
+    )
+    return tensor, valid_length
+
 def predict_sequence_frames(
     model_type: str,
     frames: list,
@@ -170,8 +185,14 @@ def predict_sequence_frames(
 
     with torch.no_grad():
         for variant in variants:
-            tensor = frames_to_model_tensor(model_type, variant, sequence_length)
-            logits = model(torch.tensor(tensor[None, ...], dtype=torch.float32))[0].numpy()
+            if getattr(model, "is_sentence_v2", False):
+                tensor, valid_length = frames_to_sentence_v2_tensor(variant)
+                x = torch.tensor(tensor[None, ...], dtype=torch.float32)
+                vl = torch.tensor([valid_length], dtype=torch.long)
+                logits = model(x, vl)[0].numpy()
+            else:
+                tensor = frames_to_model_tensor(model_type, variant, sequence_length)
+                logits = model(torch.tensor(tensor[None, ...], dtype=torch.float32))[0].numpy()
             if restrict_indices:
                 mask = np.full_like(logits, -np.inf)
                 for idx in restrict_indices:
@@ -288,23 +309,24 @@ def predict_dual_scenario(
         ):
             lookup_candidates = [best_pair, *[x for x in lookup_candidates if x is not best_pair]]
 
-        out["fusion_candidates"] = lookup_candidates[:5]
-        if lookup_candidates:
-            best = lookup_candidates[0]
-            out["scenario_text"] = best["text"]
-            out["lookup_hit"]    = True
-            out["lookup_key"]    = best["key"]
-            out["lookup_source"] = best["source"]
-            out["lookup_score"]  = best["score"]
-        else:
-            out["scenario_text"] = None
-            out["lookup_hit"]    = False
+    out["fusion_candidates"] = lookup_candidates[:5]
+    if lookup_candidates:
+        best = lookup_candidates[0]
+        out["scenario_text"] = best["text"]
+        out["lookup_hit"]    = True
+        out["lookup_key"]    = best["key"]
+        out["lookup_source"] = best["source"]
+        out["lookup_score"]  = best["score"]
+    else:
+        out["scenario_text"] = None
+        out["lookup_hit"]    = False
 
-        return out
+    return out
 
-def landmarks_payload_to_frame(landmarks: dict[str, Any]) -> Any:
+def landmarks_payload_to_frame(landmarks: dict[str, Any], layout_name: str = "mediapipe_xyz") -> Any:
     if np is None:
         raise RuntimeError("NumPy is not installed")
+    use_confidence = layout_name in {"mediapipe_xyzc", "xyzc", "sentence_v2"}
     layout = [("pose", 33), ("left_hand", 21), ("right_hand", 21)]
     points: list[list[float]] = []
     for key, expected in layout:
@@ -315,11 +337,16 @@ def landmarks_payload_to_frame(landmarks: dict[str, Any]) -> Any:
             pt = raw[idx] if idx < len(raw) else None
             if isinstance(pt, list):
                 xyz = [float(pt[i] or 0.0) if i < len(pt) else 0.0 for i in range(3)]
+                conf = float(pt[3] or 0.0) if len(pt) > 3 else (1.0 if any(xyz) else 0.0)
             elif isinstance(pt, dict):
                 xyz = [float(pt.get(ax, 0.0) or 0.0) for ax in ("x", "y", "z")]
+                conf = float(pt.get("visibility", pt.get("c", 0.0)) or 0.0)
+                if not conf and any(xyz):
+                    conf = 1.0
             else:
                 xyz = [0.0, 0.0, 0.0]
-            points.append(xyz)
+                conf = 0.0
+            points.append([*xyz, conf] if use_confidence else xyz)
     return np.asarray(points, dtype=np.float32)
 
 def landmarks_have_points(points: Any) -> bool:

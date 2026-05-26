@@ -179,7 +179,7 @@ def predict():
 
         model_type      = normalize_model_type(request.form.get("model_type", "sequence"))
         landmark_layout = request.form.get("landmark_layout", "mediapipe_xyz")
-        if landmark_layout != "mediapipe_xyz":
+        if landmark_layout not in {"mediapipe_xyz", "mediapipe_xyzc"}:
             return jsonify({"error": f"Unsupported landmark_layout: {landmark_layout}"}), 400
 
         client_id           = request.form.get("client_id", "default")
@@ -291,7 +291,8 @@ def predict():
             can_collect = mediapipe_landmarks_to_frame is not None
             if has_hand and can_collect:
                 set_session_misses(client_id, 0)
-                window.append(mediapipe_landmarks_to_frame(results))
+                frame_layout = "mediapipe_xyzc" if scenario_mode or model_type == "sentence_v2" else landmark_layout
+                window.append(mediapipe_landmarks_to_frame(results, layout=frame_layout))
                 prediction.update({"missing_frames": 0, "window_progress": len(window),
                                    "window_filled": False, "segmenting": True,
                                    "status": "수어 단어 구간 수집 중"})
@@ -346,7 +347,7 @@ def predict_landmarks():
 
         model_type     = normalize_model_type(str(data.get("model_type", "sequence")))
         landmark_layout = str(data.get("landmark_layout", "mediapipe_xyz"))
-        if landmark_layout != "mediapipe_xyz":
+        if landmark_layout not in {"mediapipe_xyz", "mediapipe_xyzc"}:
             return jsonify({"error": f"Unsupported landmark_layout: {landmark_layout}"}), 400
 
         client_id            = str(data.get("client_id", "default"))
@@ -428,7 +429,8 @@ def predict_landmarks():
             prediction.update({"has_hand": has_hand, "has_pose": has_pose})
             if has_hand:
                 set_session_misses(client_id, 0)
-                window.append(landmarks_payload_to_frame(landmarks))
+                frame_layout = "mediapipe_xyzc" if scenario_mode or model_type == "sentence_v2" else landmark_layout
+                window.append(landmarks_payload_to_frame(landmarks, frame_layout))
                 prediction.update({"missing_frames": 0, "window_progress": len(window),
                                    "window_filled": False, "segmenting": True,
                                    "status": "클라이언트 MediaPipe 랜드마크 수집 중"})

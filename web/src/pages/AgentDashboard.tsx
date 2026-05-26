@@ -360,7 +360,7 @@ export default function AgentDashboard({
 
       <main ref={dashboardScrollRef} onWheelCapture={handleDashboardWheel} className="grid min-h-0 min-w-0 flex-1 auto-rows-max grid-cols-1 gap-3 overflow-y-auto overflow-x-hidden overscroll-auto p-3 md:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.15fr)_minmax(0,0.9fr)]">
         {/* 민원인 수어 영상 + 메모 */}
-        <section className={`min-w-0 overflow-hidden rounded-lg border transition-colors duration-300 ${isDarkMode ? 'border-[#2b3a50] bg-[#121b2b]' : 'border-slate-200 bg-white'}`}>
+        <section className={`min-w-0 overflow-hidden rounded-lg border-[3px] transition-colors duration-300 ${isDarkMode ? 'border-[#2b3a50] bg-[#121b2b]' : 'border-slate-200 bg-white'}`}>
           <div className={`flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3 ${isDarkMode ? 'border-[#263244]' : 'border-slate-100'}`}>
             <h2 className={`text-base font-black ${isDarkMode ? 'text-slate-50' : ''}`}>민원인 수어 영상</h2>
             <span className={`rounded-full border px-2.5 py-1 text-xs font-black ${videoConnected ? (isDarkMode ? 'border-emerald-700 bg-emerald-900/40 text-emerald-400' : 'border-emerald-200 bg-emerald-50 text-emerald-700') : (isDarkMode ? 'border-slate-700 bg-slate-800 text-slate-400' : 'border-slate-200 bg-slate-50 text-slate-500')}`}>
@@ -437,7 +437,7 @@ export default function AgentDashboard({
         </section>
 
         {/* 실시간 통역 + 채팅 */}
-        <section className={`flex min-h-[420px] min-w-0 flex-col overflow-hidden rounded-lg border transition-colors duration-300 xl:min-h-0 ${isDarkMode ? 'border-[#2b3a50] bg-[#121b2b]' : 'border-slate-200 bg-white'}`}>
+        <section className={`flex min-h-[420px] min-w-0 flex-col overflow-hidden rounded-lg border-[3px] transition-colors duration-300 xl:min-h-0 ${isDarkMode ? 'border-[#2b3a50] bg-[#121b2b]' : 'border-slate-200 bg-white'}`}>
           <div className={`flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3 ${isDarkMode ? 'border-[#263244]' : 'border-slate-100'}`}>
             <h2 className={`text-base font-black ${isDarkMode ? 'text-slate-50' : ''}`}>실시간 통역</h2>
             <span className={`flex items-center gap-2 text-xs font-black ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>
@@ -468,7 +468,7 @@ export default function AgentDashboard({
         </section>
 
         {/* 상담원 답변 작성 */}
-        <section className={`flex min-h-[520px] min-w-0 flex-col overflow-hidden rounded-lg border transition-colors duration-300 md:col-span-2 xl:col-span-1 xl:min-h-0 ${isDarkMode ? 'border-[#2b3a50] bg-[#121b2b]' : 'border-slate-200 bg-white'}`}>
+        <section className={`flex min-h-[520px] min-w-0 flex-col overflow-hidden rounded-lg border-[3px] transition-colors duration-300 md:col-span-2 xl:col-span-1 xl:min-h-0 ${isDarkMode ? 'border-[#2b3a50] bg-[#121b2b]' : 'border-slate-200 bg-white'}`}>
           <div className={`shrink-0 border-b px-4 py-3 ${isDarkMode ? 'border-[#263244]' : 'border-slate-100'}`}>
             <h2 className={`text-base font-black ${isDarkMode ? 'text-slate-50' : ''}`}>상담원 답변 작성</h2>
             <p className={`mt-1 text-sm font-semibold ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>답변은 민원인 화면에서 수어/문자로 안내됩니다.</p>
