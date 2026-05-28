@@ -103,6 +103,8 @@ export interface DemoScenario {
   mirrorForPrediction?: boolean
   relaxedSegmentation?: boolean
   forceScenarioMode?: boolean
+  /** 이 데모에서만 사용할 scenario label IDs (예: ['SEN0278', 'SEN0279']). 설정 시 해당 label로만 예측을 제한합니다. */
+  scenarioHints?: string[]
 }
 
 export const validationDemoScenarios: DemoScenario[] = [
@@ -123,6 +125,8 @@ export const validationDemoScenarios: DemoScenario[] = [
       boundariesSec: [7.068],
     },
     relaxedSegmentation: true,
+    // 2세그먼트(잃어버렸어요)에서 SEN0355(감사합니다) 오인식 방지 — SEN0322로 탐색 범위 제한
+    scenarioHints: ['SEN0322'],
     clips: [
       { id: 'resident_realz03_02_welfare_card_lost', src: 'data/raw/validation_mp4/resident_realz03_02_welfare_card_lost.mp4' },
     ],
@@ -215,7 +219,7 @@ export function useSignLanguage(
   const selectedScenarioMode = (() => {
     const queryMode = new URLSearchParams(window.location.search).get('scenario')
     const storedMode = localStorage.getItem(SCENARIO_MODE_STORAGE_KEY)
-    const rawMode = queryMode || storedMode || 'off'
+    const rawMode = queryMode || storedMode || 'resident'
     const enabled = ['1', 'true', 'yes', 'resident'].includes(rawMode.toLowerCase())
     if (queryMode) {
       localStorage.setItem(SCENARIO_MODE_STORAGE_KEY, enabled ? 'resident' : 'off')
@@ -427,6 +431,9 @@ export function useSignLanguage(
   const shouldCommitScenarioText = (prediction: any): boolean => {
     const text = String(prediction?.scenario_text || '').trim()
     if (!text) return false
+    // 라이브 모드: 메인 모델이 성공했으면 scenario는 무시 (fallback 역할만)
+    // 메인 모델 실패(label=null)일 때만 안녕하세요 같은 SEN 결과를 사용
+    if (!isDemoModeRef.current && prediction?.label) return false
     if (isDemoModeRef.current && demoScenarioRef.current?.forceScenarioMode) {
       const hasManualBoundaries = getManualDemoBoundaries(demoScenarioRef.current).length > 0
       const source = String(prediction?.scenario?.lookup_source || '')
@@ -611,6 +618,9 @@ export function useSignLanguage(
         formData.append('min_segment_frames', '8')
         formData.append('run_model', 'true')
         formData.append('scenario_mode', getEffectiveScenarioMode().toString())
+        if (scenario?.scenarioHints && scenario.scenarioHints.length > 0) {
+          formData.append('scenario_sen_hints', scenario.scenarioHints.join(','))
+        }
         if (forceFinalize) {
           const video = videoRef.current
           formData.append('tta_enabled', 'false')
@@ -629,6 +639,7 @@ export function useSignLanguage(
               demo_video_time_sec: (videoRef.current?.currentTime || 0).toFixed(3),
               demo_segment_start_sec: demoSegmentStartTimeRef.current.toFixed(3),
               demo_finalize_reason: demoFinalizeReasonRef.current || 'force_finalize',
+              ...(scenario?.scenarioHints?.length ? { scenario_sen_hints: scenario.scenarioHints.join(',') } : {}),
             })
           : await fetch('/api/predict', { method: 'POST', body: formData }).then((res) => res.json().catch(() => ({})))
         const prediction = data.prediction

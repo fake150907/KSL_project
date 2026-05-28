@@ -213,6 +213,7 @@ def predict_dual_scenario(
     sequence_length: int,
     temperature: float | None = None,
     use_tta: bool = True,
+    restrict_sen_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     out: dict[str, Any] = {}
 
@@ -229,11 +230,24 @@ def predict_dual_scenario(
     else:
         out["word"] = {"label": None, "display_label": None, "confidence": 0.0, "acc_prior": 0.0, "top": []}
 
-    # SENTENCE
-    if "sentence_v2" in state.sequence_models and state.SCENARIO_SEN_INDICES:
+    # SENTENCE — restrict_sen_ids가 주어지면 해당 ID 만으로 인덱스를 재계산
+    using_hints = False
+    sen_indices = state.SCENARIO_SEN_INDICES
+    if restrict_sen_ids:
+        sen_labels = state.sequence_labels.get("sentence_v2") or []
+        sen_label_idx = {lbl: i for i, lbl in enumerate(sen_labels)}
+        restricted = [sen_label_idx[s] for s in restrict_sen_ids if s in sen_label_idx]
+        if restricted:
+            sen_indices = restricted
+            using_hints = True
+
+    # hints 사용 시: 0.20 / 일반 scenario 모드: 0.30 (기존 0.55는 너무 엄격해 다중 세그먼트 데모에서 2번째 세그먼트가 누락됨)
+    sen_conf_threshold = 0.20 if using_hints else 0.30
+
+    if "sentence_v2" in state.sequence_models and sen_indices:
         s_label, s_conf, s_top, _ = predict_sequence_frames(
             "sentence_v2", frames, sequence_length, temperature, use_tta,
-            restrict_indices=state.SCENARIO_SEN_INDICES,
+            restrict_indices=sen_indices,
         )
         out["sentence"] = {
             "label": s_label, "display_label": display_label_for(s_label),
@@ -241,6 +255,7 @@ def predict_dual_scenario(
         }
     else:
         out["sentence"] = {"label": None, "display_label": None, "confidence": 0.0, "acc_prior": 0.0, "top": []}
+        sen_conf_threshold = 0.55
 
     # Fusion candidates
     word_cands = (out["word"].get("top") or []) or [{"label": out["word"]["label"], "confidence": out["word"]["confidence"], "acc_prior": out["word"]["acc_prior"]}]
@@ -271,7 +286,7 @@ def predict_dual_scenario(
             lbl = str(item.get("label") or "")
             if lbl in state.SCENARIO_LOOKUP:
                 conf = float(item.get("confidence") or 0.0)
-                if source == "single_sentence" and conf < 0.55:
+                if source == "single_sentence" and conf < sen_conf_threshold:
                     continue
                 acc = scenario_label_acc(lbl); item["acc_prior"] = acc
                 lookup_candidates.append({
