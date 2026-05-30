@@ -421,13 +421,6 @@ export default function AgentDashboard({
           </div>
           <div className={`border-t p-4 ${isDarkMode ? 'border-[#263244]' : 'border-slate-100'}`}>
             <div className="grid gap-2">
-              <label className={`text-sm font-black ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>업무 분류</label>
-              <select value={taskType} onChange={(event) => setTaskType(event.target.value)} className={`h-11 min-w-0 rounded-lg border px-3 text-sm font-black outline-none ${isDarkMode ? 'border-[#334155] bg-[#111827] text-slate-100' : 'border-slate-200 bg-white'}`}>
-                <option>복지카드 재발급</option>
-                <option>분실 접수</option>
-                <option>본인 확인</option>
-                <option>수수료 면제</option>
-              </select>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-2">
                 <button onClick={() => addNote('처리', `${taskType} 분실 접수 진행`)} className={`whitespace-normal rounded-lg border px-3 py-2 text-sm font-black ${isDarkMode ? 'border-[#334155] text-slate-200 hover:bg-[#1e293b]' : 'border-slate-200 hover:bg-slate-50'}`}>분실 접수</button>
                 <button onClick={() => addNote('확인', '신분증 본인 확인 완료')} className={`whitespace-normal rounded-lg border px-3 py-2 text-sm font-black ${isDarkMode ? 'border-[#334155] text-slate-200 hover:bg-[#1e293b]' : 'border-slate-200 hover:bg-slate-50'}`}>본인 확인</button>

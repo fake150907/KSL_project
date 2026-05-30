@@ -198,6 +198,8 @@ def predict():
         demo_video_time_sec   = request.form.get("demo_video_time_sec")
         demo_segment_start_sec = request.form.get("demo_segment_start_sec")
         demo_finalize_reason  = request.form.get("demo_finalize_reason") or request.form.get("live_finalize_reason")
+        _hints_str = request.form.get("scenario_sen_hints") or ""
+        scenario_sen_hints: list[str] | None = [s.strip() for s in _hints_str.split(",") if s.strip()] or None
 
         window = get_session_window(client_id)
 
@@ -228,14 +230,15 @@ def predict():
                              "segment_finalized": True, "segment_frames": len(seg_frames)})
                 if scenario_mode and ("word_v2" in sequence_models or "sentence_v2" in sequence_models):
                     try:
-                        dual = predict_dual_scenario(seg_frames, seq_len, temperature, use_tta)
+                        dual = predict_dual_scenario(seg_frames, seq_len, temperature, use_tta,
+                                                     restrict_sen_ids=scenario_sen_hints)
                         pred["scenario"] = dual
                         if dual.get("scenario_text"):
                             pred["scenario_text"] = dual["scenario_text"]
-                        # 임시 디버그 로그 추가
+                        # 디버그 로그
                         print(f"[dual] word={dual.get('word', {}).get('label')} word_conf={dual.get('word', {}).get('confidence', 0):.3f}")
                         print(f"[dual] sen={dual.get('sentence', {}).get('label')} sen_conf={dual.get('sentence', {}).get('confidence', 0):.3f}")
-                        print(f"[dual] lookup_hit={dual.get('lookup_hit')} scenario_text={dual.get('scenario_text')}")
+                        print(f"[dual] hints={scenario_sen_hints} lookup_hit={dual.get('lookup_hit')} scenario_text={dual.get('scenario_text')}")
                         print(f"[dual] fusion_candidates={dual.get('fusion_candidates', [])[:2]}")
                     except Exception as exc:
                         pred["scenario_error"] = str(exc)
@@ -367,6 +370,9 @@ def predict_landmarks():
         demo_video_time_sec   = data.get("demo_video_time_sec")
         demo_segment_start_sec = data.get("demo_segment_start_sec")
         demo_finalize_reason  = data.get("demo_finalize_reason") or data.get("live_finalize_reason")
+        _hints_raw = data.get("scenario_sen_hints") or ""
+        _hints_str2 = _hints_raw if isinstance(_hints_raw, str) else ",".join(_hints_raw) if isinstance(_hints_raw, list) else ""
+        scenario_sen_hints2: list[str] | None = [s.strip() for s in _hints_str2.split(",") if s.strip()] or None
 
         window = get_session_window(client_id)
 
@@ -400,10 +406,12 @@ def predict_landmarks():
                              "segment_finalized": True, "segment_frames": len(seg_frames)})
                 if scenario_mode and ("word_v2" in sequence_models or "sentence_v2" in sequence_models):
                     try:
-                        dual = predict_dual_scenario(seg_frames, seq_len, temperature, use_tta)
+                        dual = predict_dual_scenario(seg_frames, seq_len, temperature, use_tta,
+                                                     restrict_sen_ids=scenario_sen_hints2)
                         pred["scenario"] = dual
                         if dual.get("scenario_text"):
                             pred["scenario_text"] = dual["scenario_text"]
+                        print(f"[dual/lm] hints={scenario_sen_hints2} lookup_hit={dual.get('lookup_hit')} scenario_text={dual.get('scenario_text')}")
                     except Exception as exc:
                         pred["scenario_error"] = str(exc)
                 if label and conf >= confidence_threshold:

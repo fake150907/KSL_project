@@ -1,6 +1,44 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+
+// ─── 전역 프론트엔드 에러 리포터 ─────────────────────────────────────────────
+/**
+ * 앱 전체에서 발생하는 JS 런타임 에러와 unhandled promise rejection을
+ * 백엔드 로그 저장소(/api/logs/frontend)로 전송합니다.
+ * 로그 뷰가 열려 있지 않아도 항상 동작합니다.
+ */
+function FrontendErrorReporter() {
+  useEffect(() => {
+    const post = (level: string, source: string, message: string) => {
+      // 로그 전송 실패는 조용히 무시 (무한루프 방지)
+      fetch('/api/logs/frontend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ level, source, message }),
+      }).catch(() => {})
+    }
+
+    const handleError = (event: ErrorEvent) => {
+      const file = event.filename?.split('/').pop() ?? ''
+      post('error', 'Frontend Error', `${event.message}${file ? ` (${file}:${event.lineno})` : ''}`)
+    }
+
+    const handleRejection = (event: PromiseRejectionEvent) => {
+      post('error', 'Frontend Promise', `Unhandled rejection: ${String(event.reason)}`)
+    }
+
+    window.addEventListener('error', handleError)
+    window.addEventListener('unhandledrejection', handleRejection)
+
+    return () => {
+      window.removeEventListener('error', handleError)
+      window.removeEventListener('unhandledrejection', handleRejection)
+    }
+  }, [])
+
+  return null
+}
 import type { ChatMessage } from './types'
 import LoginPage from './pages/LoginPage'
 import AdminHome from './pages/AdminHome'
@@ -171,6 +209,8 @@ export default function App() {
   }, [])
 
   return (
+    <>
+    <FrontendErrorReporter />
     <Routes>
       <Route path="/" element={<LoginPage onLogin={handleLogin} />} />
       <Route
@@ -228,5 +268,6 @@ export default function App() {
       <Route path="/kakao/callback" element={<KakaoCallback />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </>
   )
 }

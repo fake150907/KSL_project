@@ -1,6 +1,7 @@
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BarChart3, LayoutDashboard, PlayCircle, Power, Save, ScrollText, Settings, Wrench } from 'lucide-react'
+import { BarChart3, ChevronDown, LayoutDashboard, PlayCircle, Power, Save, ScrollText, Settings, Trash2, Wrench } from 'lucide-react'
+import { useLogStream, type LogEntry, type LogLevel } from '../hooks/useLogStream'
 
 interface AdminHomeProps {
   onLogout: () => void
@@ -33,12 +34,6 @@ const navItems = [
   { id: 'settings', label: '설정', description: '관리자 설정', Icon: Settings },
 ] as const
 
-const logs = [
-  { id: 1, timestamp: '2026-05-10 09:12:15', level: 'info', source: 'API Server', message: '관리자 로그인 요청 처리 완료' },
-  { id: 2, timestamp: '2026-05-10 09:10:42', level: 'success', source: 'Frontend', message: '민원인 전용 화면 빌드 검증 완료' },
-  { id: 3, timestamp: '2026-05-10 09:08:18', level: 'warning', source: 'Vision', message: '수어 인식 모델 연결 대기 중' },
-  { id: 4, timestamp: '2026-05-10 09:05:55', level: 'success', source: 'Summary', message: '상담 요약 API 환경 확인 완료' },
-] as const
 
 const crownPixels = [
   '....................',
@@ -301,31 +296,161 @@ function StatisticsView() {
   )
 }
 
+// ─── 로그 레벨별 스타일 ───────────────────────────────────────────────────────
+const LEVEL_STYLE: Record<LogLevel, { badge: string; row: string }> = {
+  error:   { badge: 'bg-red-500/20 text-red-400',    row: 'bg-red-500/5' },
+  warning: { badge: 'bg-yellow-500/20 text-yellow-400', row: 'bg-yellow-500/5' },
+  info:    { badge: 'bg-blue-500/20 text-blue-400',   row: '' },
+  success: { badge: 'bg-green-500/20 text-green-400', row: '' },
+}
+
+const LEVEL_LABEL: Record<LogLevel, string> = {
+  error: 'ERROR', warning: 'WARN', info: 'INFO', success: 'OK',
+}
+
+type LogFilter = 'all' | 'backend' | 'frontend'
+
+function isFrontendSource(source: string) {
+  return source.startsWith('Frontend')
+}
+
 function LogsView() {
+  const { logs, connected, clearDisplay } = useLogStream()
+  const [filter, setFilter] = useState<LogFilter>('all')
+  const [autoScroll, setAutoScroll] = useState(true)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const bottomRef = useRef<HTMLDivElement>(null)
+
+  // 새 로그 유입 시 자동 스크롤
+  useEffect(() => {
+    if (autoScroll && bottomRef.current) {
+      bottomRef.current.scrollIntoView({ behavior: 'smooth' })
+    }
+  // logs.length 변화 때만 실행
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logs.length, autoScroll])
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    setAutoScroll(atBottom)
+  }
+
+  const filtered: LogEntry[] = logs.filter((l) => {
+    if (filter === 'backend')  return !isFrontendSource(l.source)
+    if (filter === 'frontend') return isFrontendSource(l.source)
+    return true
+  })
+
+  const counts = {
+    all: logs.length,
+    backend:  logs.filter((l) => !isFrontendSource(l.source)).length,
+    frontend: logs.filter((l) => isFrontendSource(l.source)).length,
+  }
+
   return (
-    <div className="space-y-6">
-      <Header title="로그 확인" description="시스템 로그를 확인합니다." />
-      <div className="overflow-hidden rounded-lg border border-[#374151] bg-[#1f2937]">
-        <table className="w-full min-w-[760px]">
-          <thead className="bg-[#374151]/50 text-left text-xs uppercase text-[#9ca3af]">
-            <tr>
-              <th className="px-4 py-3">시간</th>
-              <th className="px-4 py-3">레벨</th>
-              <th className="px-4 py-3">소스</th>
-              <th className="px-4 py-3">메시지</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#374151]">
-            {logs.map((log) => (
-              <tr key={log.id} className="hover:bg-[#374151]/25">
-                <td className="px-4 py-3 font-mono text-xs text-[#9ca3af]">{log.timestamp}</td>
-                <td className="px-4 py-3"><span className="rounded-full bg-[#2563eb]/10 px-2.5 py-1 text-xs font-medium text-[#93c5fd]">{log.level}</span></td>
-                <td className="px-4 py-3 text-sm font-medium text-[#e5e7eb]">{log.source}</td>
-                <td className="px-4 py-3 text-sm text-[#e5e7eb]">{log.message}</td>
+    <div className="flex flex-col gap-4">
+      {/* 헤더 */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-bold text-white">로그 확인</h2>
+          <p className="mt-1 text-sm text-[#9ca3af]">
+            백엔드·프론트엔드 서버의 오류 로그를 실시간으로 수집합니다. (2xx 제외)
+          </p>
+        </div>
+      </div>
+
+      {/* 필터 탭 + 도구 */}
+      <div className="flex flex-wrap items-center gap-2">
+        {(['all', 'backend', 'frontend'] as LogFilter[]).map((f) => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+              filter === f
+                ? 'bg-[#2563eb] text-white'
+                : 'bg-[#374151] text-[#9ca3af] hover:text-white'
+            }`}
+          >
+            {f === 'all' ? '전체' : f === 'backend' ? '백엔드' : '프론트엔드'}
+            <span className="ml-1.5 rounded-full bg-white/10 px-1.5 py-0.5 text-xs">
+              {counts[f]}
+            </span>
+          </button>
+        ))}
+
+        <div className="ml-auto flex items-center gap-2">
+          {/* 자동 스크롤 재활성화 */}
+          {!autoScroll && (
+            <button
+              onClick={() => {
+                setAutoScroll(true)
+                bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+              }}
+              className="inline-flex items-center gap-1 rounded-lg bg-[#2563eb]/20 px-3 py-1.5 text-xs font-medium text-[#93c5fd] hover:bg-[#2563eb]/40"
+            >
+              <ChevronDown size={13} /> 맨 아래로
+            </button>
+          )}
+          {/* 화면 초기화 (서버 저장은 유지) */}
+          <button
+            onClick={clearDisplay}
+            title="화면 로그 초기화 (서버 누적 데이터는 유지)"
+            className="inline-flex items-center gap-1 rounded-lg bg-[#374151] px-3 py-1.5 text-xs font-medium text-[#9ca3af] hover:text-white"
+          >
+            <Trash2 size={13} /> 화면 초기화
+          </button>
+        </div>
+      </div>
+
+      {/* 로그 테이블 */}
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="h-[calc(100vh-20rem)] min-h-[320px] overflow-y-auto rounded-lg border border-[#374151] bg-[#0d1117]"
+      >
+        {filtered.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-[#4b5563]">
+            <ScrollText size={32} strokeWidth={1.2} />
+            <p className="text-sm">
+              {connected ? '아직 오류 로그가 없습니다.' : '서버에 연결하는 중…'}
+            </p>
+          </div>
+        ) : (
+          <table className="w-full min-w-[680px] font-mono text-xs">
+            <thead className="sticky top-0 z-10 bg-[#161b22] text-[#6e7681]">
+              <tr>
+                <th className="px-4 py-2.5 text-left font-normal">시간</th>
+                <th className="px-3 py-2.5 text-left font-normal w-16">레벨</th>
+                <th className="px-3 py-2.5 text-left font-normal w-32">소스</th>
+                <th className="px-4 py-2.5 text-left font-normal">메시지</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {filtered.map((log) => {
+                const level = (log.level in LEVEL_STYLE ? log.level : 'info') as LogLevel
+                const style = LEVEL_STYLE[level]
+                return (
+                  <tr
+                    key={log.id}
+                    className={`border-t border-[#21262d] transition-colors hover:bg-[#161b22] ${style.row}`}
+                  >
+                    <td className="px-4 py-2 text-[#6e7681] whitespace-nowrap">{log.timestamp}</td>
+                    <td className="px-3 py-2">
+                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wide ${style.badge}`}>
+                        {LEVEL_LABEL[level]}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-[#8b949e] whitespace-nowrap">{log.source}</td>
+                    <td className="px-4 py-2 text-[#c9d1d9] break-all">{log.message}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        )}
+        {/* 자동 스크롤 앵커 */}
+        <div ref={bottomRef} />
       </div>
     </div>
   )
