@@ -4,12 +4,15 @@ import threading
 import time
 from typing import Any
 
+import db as _db
+
 # 민원인 세션
 citizen_session_lock = threading.Lock()
 citizen_session: dict[str, Any] = {
     "waiting": False,
     "citizenData": None,
     "updatedAt": None,
+    "_db_session_id": None,
 }
 
 # 채팅 메시지
@@ -34,18 +37,24 @@ def set_citizen_session(citizen_data: dict[str, Any]) -> dict[str, Any]:
         "gender": str(citizen_data.get("gender", "")).strip(),
         "phone": str(citizen_data.get("phone", "")).strip(),
     }
+    db_id = _db.save_citizen_session(normalized)
     with citizen_session_lock:
         citizen_session.update({
             "waiting": True,
             "citizenData": normalized,
             "updatedAt": int(time.time()),
+            "_db_session_id": db_id,
         })
         return dict(citizen_session)
 
 def clear_citizen_session() -> dict[str, Any]:
     with citizen_session_lock:
-        citizen_session.update({"waiting": False, "citizenData": None, "updatedAt": None})
-        return dict(citizen_session)
+        db_id = citizen_session.get("_db_session_id")
+        citizen_session.update({"waiting": False, "citizenData": None, "updatedAt": None, "_db_session_id": None})
+        result = dict(citizen_session)
+    if db_id:
+        _db.end_citizen_session(db_id)
+    return result
 
 def get_messages() -> list[dict[str, Any]]:
     with chat_messages_lock:

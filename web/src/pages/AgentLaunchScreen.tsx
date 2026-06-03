@@ -102,6 +102,13 @@ export default function AgentLaunchScreen({ onSessionReset }: AgentLaunchScreenP
       if (payload?.citizenData) {
         setCitizenData(payload.citizenData)
         sessionStorage.setItem('current_citizen_data', JSON.stringify(payload.citizenData))
+        // DB 저장
+        fetch('/api/citizen-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ citizenData: payload.citizenData }),
+        }).catch((err) => console.error('[citizen-session] DB 저장 실패:', err))
       }
     }
 
