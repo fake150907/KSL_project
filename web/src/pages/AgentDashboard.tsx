@@ -285,6 +285,11 @@ export default function AgentDashboard({
     stopSpeech()
     onSessionEnd()
     socket.emit('session_end')
+    // DB ended_at 업데이트
+    fetch('/api/citizen-session', {
+      method: 'DELETE',
+      credentials: 'include',
+    }).catch((err) => console.error('[citizen-session] 종료 업데이트 실패:', err))
     setSessionDone(true)
     setShowEndConfirm(false)
     navigate('/agent/launch')

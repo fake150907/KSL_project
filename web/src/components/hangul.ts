@@ -43,5 +43,5 @@ export interface CitizenData {
 }
 
 // 💡 [수정됨] 'confirm' 단계가 추가되었습니다.
-export type Step     = 'start' | 'name' | 'dob' | 'gender' | 'phone' | 'confirm' | 'waiting'
+export type Step     = 'start' | 'consent' | 'policy' | 'name' | 'dob' | 'gender' | 'phone' | 'confirm' | 'waiting'
 export type CharStep = 'cho' | 'jung' | 'jong'

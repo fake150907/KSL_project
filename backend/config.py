@@ -20,3 +20,5 @@ class Config:
 
     ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTROPIC_API_KEY", "")
     ANTHROPIC_MODEL: str   = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+
+    DATABASE_URL: str = os.environ.get("DATABASE_URL", "")
