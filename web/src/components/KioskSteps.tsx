@@ -3,7 +3,7 @@ import HangulKeyboard from './HangulKeyboard'
 import Numpad from './Numpad'
 import SignLanguageLogo from './SignLanguageLogo'
 import { Header, Nav } from './KioskUI'
-import { formatPhone, maskName, maskPhone } from './hangul'
+import { formatPhone, maskName, maskPhone, containsSensitiveInfo } from './hangul'
 import type { CitizenData, Step } from './hangul'
 
 export interface StepProps {
@@ -425,12 +425,20 @@ export function StepPrivacyPolicy({ go }: Pick<StepProps, 'go'>) {
 
 // 2. 이름 입력
 export function StepName({ data, setData, go }: StepProps) {
+  const handleNameChange = (name: string) => {
+    if (containsSensitiveInfo(name)) {
+      alert('민감정보(주민번호 등)는 입력할 수 없습니다.')
+      setData(p => ({ ...p, name: '*'.repeat(name.length) }))
+      return
+    }
+    setData(p => ({ ...p, name }))
+  }
   return (
     <div className="h-full w-full flex flex-col bg-white text-slate-900 overflow-hidden relative">
       <Header step="name" />
       <div className="flex-1 flex flex-col items-center justify-center gap-6 px-10 py-6 overflow-y-auto">
         <h2 className="text-2xl font-black text-slate-800">이름을 입력해주세요</h2>
-        <HangulKeyboard value={data.name} onChange={(name) => setData(p => ({ ...p, name }))} />
+        <HangulKeyboard value={data.name} onChange={handleNameChange} />
         <div className="flex gap-3 w-full max-w-[680px] mt-2">
           <button onClick={() => { setData(p => ({ ...p, name: '' })); go('start') }} className="flex-1 h-14 rounded-2xl text-sm font-bold bg-slate-100 border border-slate-200 text-slate-600">처음으로</button>
           <button onClick={() => go('dob')} disabled={!data.name.trim()} className="flex-[2] h-14 rounded-2xl text-sm font-black text-white bg-blue-600 disabled:opacity-30 shadow-sm">다음 단계 →</button>
