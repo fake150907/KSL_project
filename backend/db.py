@@ -1,28 +1,43 @@
-"""PostgreSQL 연결 및 테이블 초기화."""
+"""로컬 SQLite 저장소 + 테이블 초기화.
+
+동사무소 지점별 로컬 운영을 가정한 설계:
+- 민원인 PII(이름/생일/전화)는 이 지점 로컬 SQLite 파일에만 저장(마스킹 + AES-256 암호화).
+- 수어 인식 로그는 비식별 데이터라 별도 테이블에 저장 → 추후 중앙 집계/모델 개선용.
+
+DB 파일 경로는 KSL_DB_PATH 환경변수로 바꿀 수 있고, 기본값은 backend/ksl_local.db.
+"""
 from __future__ import annotations
 
 import base64
 import os
+import sqlite3
 import threading
+from pathlib import Path
 from typing import Any
 
-_conn = None
+_conn: sqlite3.Connection | None = None
 _lock = threading.Lock()
 
 
-def get_connection():
-    """싱글턴 DB 커넥션 반환. DATABASE_URL 없으면 None."""
-    global _conn
-    database_url = os.environ.get("DATABASE_URL", "")
-    if not database_url:
-        return None
+def _db_path() -> str:
+    """로컬 SQLite 파일 경로. KSL_DB_PATH로 덮어쓸 수 있음."""
+    env_path = os.environ.get("KSL_DB_PATH", "").strip()
+    if env_path:
+        return env_path
+    return str(Path(__file__).resolve().parent / "ksl_local.db")
 
+
+def get_connection() -> sqlite3.Connection | None:
+    """싱글턴 SQLite 커넥션 반환. 실패 시 None."""
+    global _conn
     with _lock:
         try:
-            if _conn is None or _conn.closed:
-                import psycopg2
-                _conn = psycopg2.connect(database_url, sslmode="require")
-                _conn.autocommit = True
+            if _conn is None:
+                path = _db_path()
+                Path(path).parent.mkdir(parents=True, exist_ok=True)
+                # check_same_thread=False: Flask 멀티스레드에서 공유. 쓰기는 _lock으로 직렬화.
+                _conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+                _conn.execute("PRAGMA journal_mode=WAL")
         except Exception as exc:
             print(f"[db] 연결 실패: {exc}")
             _conn = None
@@ -30,25 +45,42 @@ def get_connection():
 
 
 def init_db() -> bool:
-    """citizen_sessions 테이블 생성 (없으면). 성공 시 True."""
+    """테이블 생성 (없으면). 성공 시 True."""
     conn = get_connection()
     if conn is None:
-        print("[db] DATABASE_URL 없음 — DB 저장 비활성화")
+        print("[db] SQLite 연결 실패 — DB 저장 비활성화")
         return False
     try:
-        with conn.cursor() as cur:
-            cur.execute("""
+        with _lock:
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS citizen_sessions (
-                    id          SERIAL PRIMARY KEY,
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
                     name        TEXT,
                     dob         TEXT,
                     gender      TEXT,
                     phone       TEXT,
-                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    ended_at    TIMESTAMPTZ
+                    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                    ended_at    TEXT
                 )
             """)
-        print("[db] 테이블 초기화 완료")
+            # 비식별 수어 인식 로그 (PII 없음) — 분석/모델 개선용
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS prediction_logs (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                    client_id       TEXT,
+                    model_type      TEXT,
+                    raw_label       TEXT,
+                    display_label   TEXT,
+                    confidence      REAL,
+                    below_threshold INTEGER,
+                    segment_frames  INTEGER,
+                    process_ms      REAL,
+                    scenario_mode   INTEGER,
+                    scenario_text   TEXT
+                )
+            """)
+        print(f"[db] SQLite 테이블 초기화 완료 ({_db_path()})")
         return True
     except Exception as exc:
         print(f"[db] 테이블 초기화 실패: {exc}")
@@ -131,7 +163,7 @@ def _mask_dob(dob: str) -> str:
 
 
 def save_citizen_session(data: dict[str, Any]) -> int | None:
-    """민원인 세션을 마스킹 + AES-256 암호화 후 DB에 저장하고 생성된 id 반환."""
+    """민원인 세션을 마스킹 + AES-256 암호화 후 로컬 DB에 저장하고 생성된 id 반환."""
     conn = get_connection()
     if conn is None:
         return None
@@ -143,31 +175,29 @@ def save_citizen_session(data: dict[str, Any]) -> int | None:
     stored_dob   = encrypt_value(masked_dob)
     gender       = str(data.get("gender") or "")
     try:
-        with conn.cursor() as cur:
-            cur.execute(
+        with _lock:
+            cur = conn.execute(
                 """
                 INSERT INTO citizen_sessions (name, dob, gender, phone)
-                VALUES (%s, %s, %s, %s)
-                RETURNING id
+                VALUES (?, ?, ?, ?)
                 """,
                 (stored_name, stored_dob, gender, stored_phone),
             )
-            row = cur.fetchone()
-            return row[0] if row else None
+            return cur.lastrowid
     except Exception as exc:
         print(f"[db] 세션 저장 실패: {exc}")
         return None
 
 
 def end_citizen_session(session_id: int) -> None:
-    """민원인 세션 종료 처리 (ended_at, status 업데이트)."""
+    """민원인 세션 종료 처리 (ended_at 업데이트)."""
     conn = get_connection()
     if conn is None or session_id is None:
         return
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE citizen_sessions SET ended_at=NOW() WHERE id=%s",
+        with _lock:
+            conn.execute(
+                "UPDATE citizen_sessions SET ended_at=datetime('now') WHERE id=?",
                 (session_id,),
             )
     except Exception as exc:
@@ -180,13 +210,13 @@ def get_recent_sessions(limit: int = 50) -> list[dict[str, Any]]:
     if conn is None:
         return []
     try:
-        with conn.cursor() as cur:
-            cur.execute(
+        with _lock:
+            cur = conn.execute(
                 """
                 SELECT id, name, dob, gender, phone, created_at, ended_at
                 FROM citizen_sessions
                 ORDER BY created_at DESC
-                LIMIT %s
+                LIMIT ?
                 """,
                 (limit,),
             )
@@ -197,4 +227,67 @@ def get_recent_sessions(limit: int = 50) -> list[dict[str, Any]]:
             ]
     except Exception as exc:
         print(f"[db] 세션 조회 실패: {exc}")
+        return []
+
+
+def save_prediction_log(prediction: dict[str, Any], client_id: str = "default") -> int | None:
+    """비식별 수어 인식 로그 1건 저장. prediction(예측 결과 dict)에서 필요한 필드만 추출.
+
+    PII는 저장하지 않음 — 라벨/신뢰도/지연시간 등 분석·모델 개선용 데이터만 기록.
+    """
+    conn = get_connection()
+    if conn is None:
+        return None
+    try:
+        with _lock:
+            cur = conn.execute(
+                """
+                INSERT INTO prediction_logs
+                    (client_id, model_type, raw_label, display_label, confidence,
+                     below_threshold, segment_frames, process_ms, scenario_mode, scenario_text)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(client_id),
+                    prediction.get("model_type"),
+                    prediction.get("raw_label"),
+                    prediction.get("display_label"),
+                    float(prediction.get("confidence") or 0.0),
+                    1 if prediction.get("below_threshold") else 0,
+                    prediction.get("segment_frames"),
+                    prediction.get("process_ms"),
+                    1 if prediction.get("scenario_mode") else 0,
+                    prediction.get("scenario_text"),
+                ),
+            )
+            return cur.lastrowid
+    except Exception as exc:
+        print(f"[db] 인식 로그 저장 실패: {exc}")
+        return None
+
+
+def get_recent_predictions(limit: int = 100) -> list[dict[str, Any]]:
+    """최근 수어 인식 로그 반환 (분석/대시보드용)."""
+    conn = get_connection()
+    if conn is None:
+        return []
+    try:
+        with _lock:
+            cur = conn.execute(
+                """
+                SELECT id, created_at, client_id, model_type, raw_label, display_label,
+                       confidence, below_threshold, segment_frames, process_ms,
+                       scenario_mode, scenario_text
+                FROM prediction_logs
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            cols = ["id", "created_at", "client_id", "model_type", "raw_label",
+                    "display_label", "confidence", "below_threshold", "segment_frames",
+                    "process_ms", "scenario_mode", "scenario_text"]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+    except Exception as exc:
+        print(f"[db] 인식 로그 조회 실패: {exc}")
         return []
