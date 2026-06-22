@@ -472,6 +472,26 @@ def predict_landmarks():
         traceback.print_exc()
         return jsonify({"error": str(exc)}), 500
 
+@inference_bp.route("/api/correction", methods=["POST"])
+def api_correction():
+    """오인식 수정 1건 기록. 모델 예측(predicted) vs 사람이 고친 정답(corrected) 저장."""
+    data = request.get_json(silent=True) or {}
+    predicted = str(data.get("predicted_label", "")).strip()
+    corrected = str(data.get("corrected_label", "")).strip()
+    if not corrected:
+        return jsonify({"error": "corrected_label이 필요합니다."}), 400
+    cid = _db.save_correction(
+        predicted_label=predicted or None,
+        corrected_label=corrected,
+        confidence=data.get("confidence"),
+        corrected_by=str(data.get("corrected_by", "")).strip() or None,
+        model_type=str(data.get("model_type", "")).strip() or None,
+        prediction_log_id=data.get("prediction_log_id"),
+        consultation_id=data.get("consultation_id"),
+    )
+    return jsonify({"id": cid, "ok": cid is not None}), 200
+
+
 @inference_bp.route("/api/kakao/login", methods=["GET"])
 def kakao_login():
     from urllib.parse import urlencode
