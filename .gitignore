@@ -16,6 +16,11 @@ outputs/reports/
 backend/config.py
 !backend/config.example.py
 
+# 로컬 SQLite DB (민원인 PII 포함 — 절대 커밋 금지)
+*.db
+*.db-wal
+*.db-shm
+
 # Personal/team-lead notes
 TEAM_LEAD_REACT/
 
