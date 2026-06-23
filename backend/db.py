@@ -1,28 +1,43 @@
-"""PostgreSQL 연결 및 테이블 초기화."""
+"""로컬 SQLite 저장소 + 테이블 초기화.
+
+동사무소 지점별 로컬 운영을 가정한 설계:
+- 민원인 PII(이름/생일/전화)는 이 지점 로컬 SQLite 파일에만 저장(마스킹 + AES-256 암호화).
+- 수어 인식 로그는 비식별 데이터라 별도 테이블에 저장 → 추후 중앙 집계/모델 개선용.
+
+DB 파일 경로는 KSL_DB_PATH 환경변수로 바꿀 수 있고, 기본값은 backend/ksl_local.db.
+"""
 from __future__ import annotations
 
 import base64
 import os
+import sqlite3
 import threading
+from pathlib import Path
 from typing import Any
 
-_conn = None
+_conn: sqlite3.Connection | None = None
 _lock = threading.Lock()
 
 
-def get_connection():
-    """싱글턴 DB 커넥션 반환. DATABASE_URL 없으면 None."""
-    global _conn
-    database_url = os.environ.get("DATABASE_URL", "")
-    if not database_url:
-        return None
+def _db_path() -> str:
+    """로컬 SQLite 파일 경로. KSL_DB_PATH로 덮어쓸 수 있음."""
+    env_path = os.environ.get("KSL_DB_PATH", "").strip()
+    if env_path:
+        return env_path
+    return str(Path(__file__).resolve().parent / "ksl_local.db")
 
+
+def get_connection() -> sqlite3.Connection | None:
+    """싱글턴 SQLite 커넥션 반환. 실패 시 None."""
+    global _conn
     with _lock:
         try:
-            if _conn is None or _conn.closed:
-                import psycopg2
-                _conn = psycopg2.connect(database_url, sslmode="require")
-                _conn.autocommit = True
+            if _conn is None:
+                path = _db_path()
+                Path(path).parent.mkdir(parents=True, exist_ok=True)
+                # check_same_thread=False: Flask 멀티스레드에서 공유. 쓰기는 _lock으로 직렬화.
+                _conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+                _conn.execute("PRAGMA journal_mode=WAL")
         except Exception as exc:
             print(f"[db] 연결 실패: {exc}")
             _conn = None
@@ -30,25 +45,80 @@ def get_connection():
 
 
 def init_db() -> bool:
-    """citizen_sessions 테이블 생성 (없으면). 성공 시 True."""
+    """테이블 생성 (없으면). 성공 시 True."""
     conn = get_connection()
     if conn is None:
-        print("[db] DATABASE_URL 없음 — DB 저장 비활성화")
+        print("[db] SQLite 연결 실패 — DB 저장 비활성화")
         return False
     try:
-        with conn.cursor() as cur:
-            cur.execute("""
+        with _lock:
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS citizen_sessions (
-                    id          SERIAL PRIMARY KEY,
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
                     name        TEXT,
                     dob         TEXT,
                     gender      TEXT,
                     phone       TEXT,
-                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    ended_at    TIMESTAMPTZ
+                    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                    ended_at    TEXT
                 )
             """)
-        print("[db] 테이블 초기화 완료")
+            # 비식별 수어 인식 로그 (PII 없음) — 분석/모델 개선용
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS prediction_logs (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                    client_id       TEXT,
+                    model_type      TEXT,
+                    raw_label       TEXT,
+                    display_label   TEXT,
+                    confidence      REAL,
+                    below_threshold INTEGER,
+                    segment_frames  INTEGER,
+                    process_ms      REAL,
+                    scenario_mode   INTEGER,
+                    scenario_text   TEXT
+                )
+            """)
+            # 상담 메타데이터 (비식별) — 시나리오/소요시간/처리결과. consultation_id로 다른 데이터 연결
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS consultations (
+                    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                    citizen_session_id INTEGER,
+                    scenario           TEXT,
+                    status             TEXT NOT NULL DEFAULT '진행중',
+                    result             TEXT,
+                    started_at         TEXT NOT NULL DEFAULT (datetime('now')),
+                    ended_at           TEXT,
+                    duration_sec       INTEGER
+                )
+            """)
+            # 오인식 수정 이력 (비식별) — 모델 예측 vs 사람이 고친 정답. 재학습용 라벨
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS prediction_corrections (
+                    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+                    prediction_log_id INTEGER,
+                    consultation_id   INTEGER,
+                    predicted_label   TEXT,
+                    corrected_label   TEXT,
+                    confidence        REAL,
+                    corrected_by      TEXT,
+                    model_type        TEXT
+                )
+            """)
+            # 상담 대화 기록 (PII 가능성 → 본문 암호화). 보존기간 후 purge_old_data로 삭제
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS consultation_messages (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                    consultation_id INTEGER,
+                    message_id      TEXT,
+                    sender          TEXT,
+                    text_enc        TEXT
+                )
+            """)
+        print(f"[db] SQLite 테이블 초기화 완료 ({_db_path()})")
         return True
     except Exception as exc:
         print(f"[db] 테이블 초기화 실패: {exc}")
@@ -131,7 +201,7 @@ def _mask_dob(dob: str) -> str:
 
 
 def save_citizen_session(data: dict[str, Any]) -> int | None:
-    """민원인 세션을 마스킹 + AES-256 암호화 후 DB에 저장하고 생성된 id 반환."""
+    """민원인 세션을 마스킹 + AES-256 암호화 후 로컬 DB에 저장하고 생성된 id 반환."""
     conn = get_connection()
     if conn is None:
         return None
@@ -143,31 +213,29 @@ def save_citizen_session(data: dict[str, Any]) -> int | None:
     stored_dob   = encrypt_value(masked_dob)
     gender       = str(data.get("gender") or "")
     try:
-        with conn.cursor() as cur:
-            cur.execute(
+        with _lock:
+            cur = conn.execute(
                 """
                 INSERT INTO citizen_sessions (name, dob, gender, phone)
-                VALUES (%s, %s, %s, %s)
-                RETURNING id
+                VALUES (?, ?, ?, ?)
                 """,
                 (stored_name, stored_dob, gender, stored_phone),
             )
-            row = cur.fetchone()
-            return row[0] if row else None
+            return cur.lastrowid
     except Exception as exc:
         print(f"[db] 세션 저장 실패: {exc}")
         return None
 
 
 def end_citizen_session(session_id: int) -> None:
-    """민원인 세션 종료 처리 (ended_at, status 업데이트)."""
+    """민원인 세션 종료 처리 (ended_at 업데이트)."""
     conn = get_connection()
     if conn is None or session_id is None:
         return
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE citizen_sessions SET ended_at=NOW() WHERE id=%s",
+        with _lock:
+            conn.execute(
+                "UPDATE citizen_sessions SET ended_at=datetime('now') WHERE id=?",
                 (session_id,),
             )
     except Exception as exc:
@@ -180,13 +248,13 @@ def get_recent_sessions(limit: int = 50) -> list[dict[str, Any]]:
     if conn is None:
         return []
     try:
-        with conn.cursor() as cur:
-            cur.execute(
+        with _lock:
+            cur = conn.execute(
                 """
                 SELECT id, name, dob, gender, phone, created_at, ended_at
                 FROM citizen_sessions
                 ORDER BY created_at DESC
-                LIMIT %s
+                LIMIT ?
                 """,
                 (limit,),
             )
@@ -198,3 +266,280 @@ def get_recent_sessions(limit: int = 50) -> list[dict[str, Any]]:
     except Exception as exc:
         print(f"[db] 세션 조회 실패: {exc}")
         return []
+
+
+def save_prediction_log(prediction: dict[str, Any], client_id: str = "default") -> int | None:
+    """비식별 수어 인식 로그 1건 저장. prediction(예측 결과 dict)에서 필요한 필드만 추출.
+
+    PII는 저장하지 않음 — 라벨/신뢰도/지연시간 등 분석·모델 개선용 데이터만 기록.
+    """
+    conn = get_connection()
+    if conn is None:
+        return None
+    try:
+        with _lock:
+            cur = conn.execute(
+                """
+                INSERT INTO prediction_logs
+                    (client_id, model_type, raw_label, display_label, confidence,
+                     below_threshold, segment_frames, process_ms, scenario_mode, scenario_text)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(client_id),
+                    prediction.get("model_type"),
+                    prediction.get("raw_label"),
+                    prediction.get("display_label"),
+                    float(prediction.get("confidence") or 0.0),
+                    1 if prediction.get("below_threshold") else 0,
+                    prediction.get("segment_frames"),
+                    prediction.get("process_ms"),
+                    1 if prediction.get("scenario_mode") else 0,
+                    prediction.get("scenario_text"),
+                ),
+            )
+            return cur.lastrowid
+    except Exception as exc:
+        print(f"[db] 인식 로그 저장 실패: {exc}")
+        return None
+
+
+def get_recent_predictions(limit: int = 100) -> list[dict[str, Any]]:
+    """최근 수어 인식 로그 반환 (분석/대시보드용)."""
+    conn = get_connection()
+    if conn is None:
+        return []
+    try:
+        with _lock:
+            cur = conn.execute(
+                """
+                SELECT id, created_at, client_id, model_type, raw_label, display_label,
+                       confidence, below_threshold, segment_frames, process_ms,
+                       scenario_mode, scenario_text
+                FROM prediction_logs
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            cols = ["id", "created_at", "client_id", "model_type", "raw_label",
+                    "display_label", "confidence", "below_threshold", "segment_frames",
+                    "process_ms", "scenario_mode", "scenario_text"]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+    except Exception as exc:
+        print(f"[db] 인식 로그 조회 실패: {exc}")
+        return []
+
+
+# ─────────────────────────────────────────────
+# 상담 메타데이터 (consultations) — 비식별, 평문
+# ─────────────────────────────────────────────
+def save_consultation(citizen_session_id: int | None = None, scenario: str | None = None) -> int | None:
+    """상담 1건 시작 기록. 생성된 consultation id 반환."""
+    conn = get_connection()
+    if conn is None:
+        return None
+    try:
+        with _lock:
+            cur = conn.execute(
+                "INSERT INTO consultations (citizen_session_id, scenario) VALUES (?, ?)",
+                (citizen_session_id, scenario),
+            )
+            return cur.lastrowid
+    except Exception as exc:
+        print(f"[db] 상담 저장 실패: {exc}")
+        return None
+
+
+def end_consultation(consultation_id: int, result: str = "완료") -> None:
+    """상담 종료 처리. ended_at/소요시간(duration_sec)/처리결과 기록."""
+    conn = get_connection()
+    if conn is None or consultation_id is None:
+        return
+    try:
+        with _lock:
+            conn.execute(
+                """
+                UPDATE consultations
+                SET ended_at = datetime('now'),
+                    status   = '완료',
+                    result   = ?,
+                    duration_sec = CAST((julianday('now') - julianday(started_at)) * 86400 AS INTEGER)
+                WHERE id = ?
+                """,
+                (result, consultation_id),
+            )
+    except Exception as exc:
+        print(f"[db] 상담 종료 업데이트 실패: {exc}")
+
+
+def get_recent_consultations(limit: int = 100) -> list[dict[str, Any]]:
+    """최근 상담 메타데이터 반환 (대시보드/통계용)."""
+    conn = get_connection()
+    if conn is None:
+        return []
+    try:
+        with _lock:
+            cur = conn.execute(
+                """
+                SELECT id, citizen_session_id, scenario, status, result,
+                       started_at, ended_at, duration_sec
+                FROM consultations
+                ORDER BY started_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            cols = ["id", "citizen_session_id", "scenario", "status", "result",
+                    "started_at", "ended_at", "duration_sec"]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+    except Exception as exc:
+        print(f"[db] 상담 조회 실패: {exc}")
+        return []
+
+
+# ─────────────────────────────────────────────
+# 오인식 수정 이력 (prediction_corrections) — 비식별, 평문
+# ─────────────────────────────────────────────
+def save_correction(
+    predicted_label: str,
+    corrected_label: str,
+    confidence: float | None = None,
+    corrected_by: str | None = None,
+    model_type: str | None = None,
+    prediction_log_id: int | None = None,
+    consultation_id: int | None = None,
+) -> int | None:
+    """모델 예측 vs 사람이 고친 정답 1건 기록. 재학습용 라벨 데이터."""
+    conn = get_connection()
+    if conn is None:
+        return None
+    try:
+        with _lock:
+            cur = conn.execute(
+                """
+                INSERT INTO prediction_corrections
+                    (prediction_log_id, consultation_id, predicted_label, corrected_label,
+                     confidence, corrected_by, model_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    prediction_log_id, consultation_id,
+                    str(predicted_label) if predicted_label is not None else None,
+                    str(corrected_label) if corrected_label is not None else None,
+                    float(confidence) if confidence is not None else None,
+                    corrected_by, model_type,
+                ),
+            )
+            return cur.lastrowid
+    except Exception as exc:
+        print(f"[db] 수정 이력 저장 실패: {exc}")
+        return None
+
+
+def get_recent_corrections(limit: int = 100) -> list[dict[str, Any]]:
+    """최근 오인식 수정 이력 반환."""
+    conn = get_connection()
+    if conn is None:
+        return []
+    try:
+        with _lock:
+            cur = conn.execute(
+                """
+                SELECT id, created_at, prediction_log_id, consultation_id,
+                       predicted_label, corrected_label, confidence, corrected_by, model_type
+                FROM prediction_corrections
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            cols = ["id", "created_at", "prediction_log_id", "consultation_id",
+                    "predicted_label", "corrected_label", "confidence", "corrected_by", "model_type"]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+    except Exception as exc:
+        print(f"[db] 수정 이력 조회 실패: {exc}")
+        return []
+
+
+# ─────────────────────────────────────────────
+# 상담 대화 기록 (consultation_messages) — PII 가능 → 본문 암호화
+# ─────────────────────────────────────────────
+def save_message(consultation_id: int | None, sender: str, text: str, message_id: str | None = None) -> int | None:
+    """상담 대화 1건 저장. 본문(text)은 AES-256으로 암호화하여 저장."""
+    conn = get_connection()
+    if conn is None:
+        return None
+    try:
+        text_enc = encrypt_value(str(text or ""))
+        with _lock:
+            cur = conn.execute(
+                """
+                INSERT INTO consultation_messages (consultation_id, message_id, sender, text_enc)
+                VALUES (?, ?, ?, ?)
+                """,
+                (consultation_id, message_id, sender, text_enc),
+            )
+            return cur.lastrowid
+    except Exception as exc:
+        print(f"[db] 대화 저장 실패: {exc}")
+        return None
+
+
+def get_consultation_messages(consultation_id: int, limit: int = 500) -> list[dict[str, Any]]:
+    """특정 상담의 대화 기록 반환. 본문은 복호화하여 text로 제공."""
+    conn = get_connection()
+    if conn is None:
+        return []
+    try:
+        with _lock:
+            cur = conn.execute(
+                """
+                SELECT id, created_at, consultation_id, message_id, sender, text_enc
+                FROM consultation_messages
+                WHERE consultation_id = ?
+                ORDER BY id ASC
+                LIMIT ?
+                """,
+                (consultation_id, limit),
+            )
+            rows = cur.fetchall()
+        result = []
+        for r in rows:
+            result.append({
+                "id": r[0], "created_at": r[1], "consultation_id": r[2],
+                "message_id": r[3], "sender": r[4], "text": decrypt_value(r[5]),
+            })
+        return result
+    except Exception as exc:
+        print(f"[db] 대화 조회 실패: {exc}")
+        return []
+
+
+# ─────────────────────────────────────────────
+# 보존기간 정책 — 오래된 PII 자동 삭제 (retention)
+# ─────────────────────────────────────────────
+def purge_old_data(days: int = 30) -> dict[str, int]:
+    """보존기간(days)이 지난 PII 데이터 삭제. 비식별 분석 데이터는 보존.
+
+    삭제 대상: citizen_sessions(민원인 정보), consultation_messages(대화 기록).
+    """
+    conn = get_connection()
+    if conn is None:
+        return {"citizen_sessions": 0, "consultation_messages": 0}
+    cutoff = f"-{int(days)} days"
+    try:
+        with _lock:
+            c1 = conn.execute(
+                "DELETE FROM consultation_messages WHERE created_at < datetime('now', ?)",
+                (cutoff,),
+            ).rowcount
+            c2 = conn.execute(
+                "DELETE FROM citizen_sessions WHERE created_at < datetime('now', ?)",
+                (cutoff,),
+            ).rowcount
+        print(f"[db] 보존기간({days}일) 경과 데이터 삭제: 대화 {c1}건, 민원인 {c2}건")
+        return {"consultation_messages": c1, "citizen_sessions": c2}
+    except Exception as exc:
+        print(f"[db] 보존기간 삭제 실패: {exc}")
+        return {"citizen_sessions": 0, "consultation_messages": 0}

@@ -1,7 +1,16 @@
 import { Server } from "socket.io";
 import http from "http";
 
-const server = http.createServer();
+const server = http.createServer((req, res) => {
+  // Railway 헬스체크 / 생존 확인용 (socket.io 요청은 아래 io가 가로챔)
+  if (req.url === "/health" || req.url === "/") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "ok", service: "signaling" }));
+    return;
+  }
+  res.writeHead(404);
+  res.end();
+});
 
 const io = new Server(server, {
   cors: {
