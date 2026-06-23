@@ -122,8 +122,6 @@ export default function AgentDashboard({
 
   useEffect(() => {
     registerRole('agent')
-    // 상담원 화면 마운트(새로고침/재접속 포함) 시 키오스크에 영상 offer 재요청
-    socket.emit('request_offer')
   }, [])
 
   useEffect(() => {
