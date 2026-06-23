@@ -187,6 +187,14 @@ export default function CitizenKiosk({
     }
   }, [stopCamera, actualCitizenPhone, actualCitizenName, messages])
 
+  // 상담원이 재접속(새로고침)하면 영상 연결을 다시 맺기 위한 트리거
+  const [offerNonce, setOfferNonce] = useState(0)
+  useEffect(() => {
+    const handleRequestOffer = () => setOfferNonce((n) => n + 1)
+    socket.on('request_offer', handleRequestOffer)
+    return () => { socket.off('request_offer', handleRequestOffer) }
+  }, [])
+
   // WebRTC
   useEffect(() => {
     if (!isRunning || !videoRef.current?.srcObject) return;
@@ -254,7 +262,7 @@ export default function CitizenKiosk({
       socket.off('webrtc_answer', handleAnswer);
       socket.off('webrtc_ice_candidate', handleCandidate);
     };
-  }, [isRunning, videoRef]);
+  }, [isRunning, videoRef, offerNonce]);
 
   const [clock, setClock] = useState(() => new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }))
   const [textSizeMode, setTextSizeMode] = useState<TextSizeMode>('base')

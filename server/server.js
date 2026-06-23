@@ -77,6 +77,12 @@ io.on("connection", (socket) => {
     io.to("kiosk").emit("agent_ready");
   });
 
+  // 상담원 재접속/새로고침 시 키오스크에 영상 offer 재전송 요청
+  socket.on("request_offer", () => {
+    console.log("[offer 재요청] 상담원 → 키오스크");
+    io.to("kiosk").emit("request_offer");
+  });
+
   // 4. 세션 초기화
   socket.on("session_reset", () => {
     console.log("[세션 종료]");
