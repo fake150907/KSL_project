@@ -59,7 +59,7 @@ def init_db() -> bool:
                     dob         TEXT,
                     gender      TEXT,
                     phone       TEXT,
-                    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                    created_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
                     ended_at    TEXT
                 )
             """)
@@ -67,7 +67,7 @@ def init_db() -> bool:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS prediction_logs (
                     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                    created_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
                     client_id       TEXT,
                     model_type      TEXT,
                     raw_label       TEXT,
@@ -88,7 +88,7 @@ def init_db() -> bool:
                     scenario           TEXT,
                     status             TEXT NOT NULL DEFAULT '진행중',
                     result             TEXT,
-                    started_at         TEXT NOT NULL DEFAULT (datetime('now')),
+                    started_at         TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
                     ended_at           TEXT,
                     duration_sec       INTEGER
                 )
@@ -97,7 +97,7 @@ def init_db() -> bool:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS prediction_corrections (
                     id                INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+                    created_at        TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
                     prediction_log_id INTEGER,
                     consultation_id   INTEGER,
                     predicted_label   TEXT,
@@ -111,7 +111,7 @@ def init_db() -> bool:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS consultation_messages (
                     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                    created_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
                     consultation_id INTEGER,
                     message_id      TEXT,
                     sender          TEXT,
@@ -235,7 +235,7 @@ def end_citizen_session(session_id: int) -> None:
     try:
         with _lock:
             conn.execute(
-                "UPDATE citizen_sessions SET ended_at=datetime('now') WHERE id=?",
+                "UPDATE citizen_sessions SET ended_at=datetime('now', 'localtime') WHERE id=?",
                 (session_id,),
             )
     except Exception as exc:
@@ -361,10 +361,10 @@ def end_consultation(consultation_id: int, result: str = "완료") -> None:
             conn.execute(
                 """
                 UPDATE consultations
-                SET ended_at = datetime('now'),
+                SET ended_at = datetime('now', 'localtime'),
                     status   = '완료',
                     result   = ?,
-                    duration_sec = CAST((julianday('now') - julianday(started_at)) * 86400 AS INTEGER)
+                    duration_sec = CAST((julianday(datetime('now', 'localtime')) - julianday(started_at)) * 86400 AS INTEGER)
                 WHERE id = ?
                 """,
                 (result, consultation_id),
@@ -531,11 +531,11 @@ def purge_old_data(days: int = 30) -> dict[str, int]:
     try:
         with _lock:
             c1 = conn.execute(
-                "DELETE FROM consultation_messages WHERE created_at < datetime('now', ?)",
+                "DELETE FROM consultation_messages WHERE created_at < datetime('now', 'localtime', ?)",
                 (cutoff,),
             ).rowcount
             c2 = conn.execute(
-                "DELETE FROM citizen_sessions WHERE created_at < datetime('now', ?)",
+                "DELETE FROM citizen_sessions WHERE created_at < datetime('now', 'localtime', ?)",
                 (cutoff,),
             ).rowcount
         print(f"[db] 보존기간({days}일) 경과 데이터 삭제: 대화 {c1}건, 민원인 {c2}건")
