@@ -53,6 +53,12 @@ io.on("connection", (socket) => {
     socket.join(role);
     console.log(`[등록됨] ${role} (Socket ID: ${socket.id})`);
 
+    if (role === "agent") {
+      // 상담원이 (재)등록되면(새로고침 포함) 키오스크에 영상 offer 재요청.
+      // register가 먼저 처리돼 roleToSocketId["agent"]가 갱신된 뒤라 offer 라우팅이 보장됨.
+      io.to("kiosk").emit("request_offer");
+    }
+
     if (role === "agent" && pendingCitizen) {
       socket.emit("citizen_arrived", { citizenData: pendingCitizen });
       pendingCitizen = null;
