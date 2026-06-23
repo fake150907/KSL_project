@@ -151,6 +151,7 @@ export const validationDemoScenarios: DemoScenario[] = [
       boundariesSec: [5.067],
     },
     relaxedSegmentation: true,
+    scenarioHints: ['SEN0169', 'SEN0175'],
     clips: [
       { id: 'resident_realz03_04_id_here', src: 'data/raw/validation_mp4/resident_realz03_04_id_here.mp4' },
     ],
@@ -160,6 +161,7 @@ export const validationDemoScenarios: DemoScenario[] = [
     forceScenarioMode: true,
     segmentation: 'auto',
     relaxedSegmentation: true,
+    scenarioHints: ['SEN0278', 'SEN0279'],
     clips: [
       { id: 'resident_realz03_05_subway_lost', src: 'data/raw/validation_mp4/resident_realz03_05_subway_lost.mp4' },
     ],
