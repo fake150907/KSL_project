@@ -13,12 +13,14 @@ import queue as queue_module
 
 from flask import Blueprint, Response, jsonify, request, stream_with_context
 
+from auth.routes import login_required
 from .store import get_history, push_log, subscribe, unsubscribe
 
 logs_bp = Blueprint("logs", __name__)
 
 
 @logs_bp.route("/api/logs", methods=["GET"])
+@login_required
 def get_logs():
     """누적 로그 전체를 JSON으로 반환."""
     return jsonify(get_history()), 200
@@ -37,6 +39,7 @@ def receive_frontend_log():
 
 
 @logs_bp.route("/api/logs/stream")
+@login_required
 def stream_logs():
     """SSE 실시간 스트림.
 

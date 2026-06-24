@@ -3,14 +3,20 @@ from __future__ import annotations
 import hashlib
 import os
 
-def _default_password_hash() -> str:
-    # 기본 비밀번호 해싱 (운영 시에는 .env에 해시값을 직접 넣는 것이 좋습니다)
-    return hashlib.sha256("admin1234".encode("utf-8")).hexdigest()
+
+def _require_env(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise RuntimeError(
+            f"필수 환경변수 {name!r}가 설정되지 않았습니다. .env 파일을 확인하세요."
+        )
+    return value
+
 
 class Config:
-    FLASK_SECRET_KEY: str  = os.environ.get("FLASK_SECRET_KEY", "sign-interpreter-secret")
-    ADMIN_USERNAME: str    = os.environ.get("ADMIN_USERNAME", "admin")
-    ADMIN_PASSWORD_HASH: str = os.environ.get("ADMIN_PASSWORD_HASH", _default_password_hash())
+    FLASK_SECRET_KEY: str    = _require_env("FLASK_SECRET_KEY")
+    ADMIN_USERNAME: str      = os.environ.get("ADMIN_USERNAME", "admin")
+    ADMIN_PASSWORD_HASH: str = _require_env("ADMIN_PASSWORD_HASH")
     SESSION_TIMEOUT: int   = int(os.environ.get("SESSION_TIMEOUT", "43200"))
 
     KAKAO_REST_API_KEY: str   = os.environ.get("KAKAO_REST_API_KEY", "")

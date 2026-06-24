@@ -1150,11 +1150,7 @@ export function useSignLanguage(
             at: Date.now(),
           },
         }))
-        console.log(
-          `[live segmentation] finalize reason=${finalizeReason}, ` +
-            `label=${pred.label}, conf=${pred.confidence?.toFixed(3)}, ` +
-            `segment_frames=${prediction.segment_frames}`,
-        )
+
       }
     } catch (err) {
       console.error('Failed to finalize live segment:', err)

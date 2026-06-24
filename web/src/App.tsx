@@ -92,6 +92,22 @@ export default function App() {
   const seenIds = useRef<Set<string>>(new Set())
   const channelRef = useRef<BroadcastChannel | null>(null)
 
+  // localStorage 우회 차단: 마운트 시 서버 세션 실제 검증
+  useEffect(() => {
+    fetch('/api/auth/status', { credentials: 'include' })
+      .then((r) => r.json())
+      .then((data: { authenticated: boolean }) => {
+        if (!data.authenticated) {
+          localStorage.removeItem(AUTH_KEY)
+          setIsAuthenticated(false)
+        }
+      })
+      .catch(() => {
+        localStorage.removeItem(AUTH_KEY)
+        setIsAuthenticated(false)
+      })
+  }, [])
+
   useEffect(() => {
     const mode = new URLSearchParams(window.location.search).get('mp')
     if (mode === 'client' || mode === 'server') {
