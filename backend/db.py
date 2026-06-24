@@ -55,6 +55,7 @@ def init_db() -> bool:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS citizen_sessions (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    branch_id   TEXT,
                     name        TEXT,
                     dob         TEXT,
                     gender      TEXT,
@@ -67,6 +68,7 @@ def init_db() -> bool:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS prediction_logs (
                     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    branch_id       TEXT,
                     created_at      TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
                     client_id       TEXT,
                     model_type      TEXT,
@@ -84,6 +86,7 @@ def init_db() -> bool:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS consultations (
                     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                    branch_id          TEXT,
                     citizen_session_id INTEGER,
                     scenario           TEXT,
                     status             TEXT NOT NULL DEFAULT '진행중',
@@ -118,7 +121,19 @@ def init_db() -> bool:
                     text_enc        TEXT
                 )
             """)
+            # 지점(동사무소) 계정 — 지점별 로그인. branch_id가 모든 데이터의 소속 지점이 됨
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS branches (
+                    branch_id      TEXT PRIMARY KEY,
+                    name           TEXT NOT NULL,
+                    region         TEXT,
+                    username       TEXT UNIQUE NOT NULL,
+                    password_hash  TEXT NOT NULL,
+                    created_at     TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+                )
+            """)
         print(f"[db] SQLite 테이블 초기화 완료 ({_db_path()})")
+        seed_demo_branches()  # 데모 지점 계정 (비어있을 때만)
         return True
     except Exception as exc:
         print(f"[db] 테이블 초기화 실패: {exc}")
@@ -200,7 +215,7 @@ def _mask_dob(dob: str) -> str:
     return f"{dob[:2]}{'*' * (len(dob) - 2)}"
 
 
-def save_citizen_session(data: dict[str, Any]) -> int | None:
+def save_citizen_session(data: dict[str, Any], branch_id: str | None = None) -> int | None:
     """민원인 세션을 마스킹 + AES-256 암호화 후 로컬 DB에 저장하고 생성된 id 반환."""
     conn = get_connection()
     if conn is None:
@@ -216,10 +231,10 @@ def save_citizen_session(data: dict[str, Any]) -> int | None:
         with _lock:
             cur = conn.execute(
                 """
-                INSERT INTO citizen_sessions (name, dob, gender, phone)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO citizen_sessions (branch_id, name, dob, gender, phone)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (stored_name, stored_dob, gender, stored_phone),
+                (branch_id, stored_name, stored_dob, gender, stored_phone),
             )
             return cur.lastrowid
     except Exception as exc:
@@ -268,7 +283,7 @@ def get_recent_sessions(limit: int = 50) -> list[dict[str, Any]]:
         return []
 
 
-def save_prediction_log(prediction: dict[str, Any], client_id: str = "default") -> int | None:
+def save_prediction_log(prediction: dict[str, Any], client_id: str = "default", branch_id: str | None = None) -> int | None:
     """비식별 수어 인식 로그 1건 저장. prediction(예측 결과 dict)에서 필요한 필드만 추출.
 
     PII는 저장하지 않음 — 라벨/신뢰도/지연시간 등 분석·모델 개선용 데이터만 기록.
@@ -281,11 +296,12 @@ def save_prediction_log(prediction: dict[str, Any], client_id: str = "default") 
             cur = conn.execute(
                 """
                 INSERT INTO prediction_logs
-                    (client_id, model_type, raw_label, display_label, confidence,
+                    (branch_id, client_id, model_type, raw_label, display_label, confidence,
                      below_threshold, segment_frames, process_ms, scenario_mode, scenario_text)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    branch_id,
                     str(client_id),
                     prediction.get("model_type"),
                     prediction.get("raw_label"),
@@ -334,7 +350,7 @@ def get_recent_predictions(limit: int = 100) -> list[dict[str, Any]]:
 # ─────────────────────────────────────────────
 # 상담 메타데이터 (consultations) — 비식별, 평문
 # ─────────────────────────────────────────────
-def save_consultation(citizen_session_id: int | None = None, scenario: str | None = None) -> int | None:
+def save_consultation(citizen_session_id: int | None = None, scenario: str | None = None, branch_id: str | None = None) -> int | None:
     """상담 1건 시작 기록. 생성된 consultation id 반환."""
     conn = get_connection()
     if conn is None:
@@ -342,8 +358,8 @@ def save_consultation(citizen_session_id: int | None = None, scenario: str | Non
     try:
         with _lock:
             cur = conn.execute(
-                "INSERT INTO consultations (citizen_session_id, scenario) VALUES (?, ?)",
-                (citizen_session_id, scenario),
+                "INSERT INTO consultations (branch_id, citizen_session_id, scenario) VALUES (?, ?, ?)",
+                (branch_id, citizen_session_id, scenario),
             )
             return cur.lastrowid
     except Exception as exc:
@@ -543,3 +559,95 @@ def purge_old_data(days: int = 30) -> dict[str, int]:
     except Exception as exc:
         print(f"[db] 보존기간 삭제 실패: {exc}")
         return {"citizen_sessions": 0, "consultation_messages": 0}
+
+
+# ─────────────────────────────────────────────
+# 지점(branches) 계정 — 지점별 로그인 / 목록 / 시드
+# ─────────────────────────────────────────────
+def _hash_pw(password: str) -> str:
+    import hashlib
+    return hashlib.sha256(str(password).encode("utf-8")).hexdigest()
+
+
+def get_branch_by_username(username: str) -> dict[str, Any] | None:
+    """username으로 지점 계정 조회 (로그인 검증용)."""
+    conn = get_connection()
+    if conn is None:
+        return None
+    try:
+        with _lock:
+            cur = conn.execute(
+                "SELECT branch_id, name, region, username, password_hash FROM branches WHERE username = ?",
+                (str(username),),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        cols = ["branch_id", "name", "region", "username", "password_hash"]
+        return dict(zip(cols, row))
+    except Exception as exc:
+        print(f"[db] 지점 조회 실패: {exc}")
+        return None
+
+
+def verify_branch_login(username: str, password: str) -> dict[str, Any] | None:
+    """지점 로그인 검증. 성공 시 {branch_id, name, region}, 실패 시 None."""
+    branch = get_branch_by_username(username)
+    if branch is None:
+        return None
+    if branch.get("password_hash") != _hash_pw(password):
+        return None
+    return {"branch_id": branch["branch_id"], "name": branch["name"], "region": branch.get("region")}
+
+
+def list_branches() -> list[dict[str, Any]]:
+    """지점 목록 (비밀번호 제외)."""
+    conn = get_connection()
+    if conn is None:
+        return []
+    try:
+        with _lock:
+            cur = conn.execute(
+                "SELECT branch_id, name, region, username, created_at FROM branches ORDER BY branch_id"
+            )
+            cols = ["branch_id", "name", "region", "username", "created_at"]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+    except Exception as exc:
+        print(f"[db] 지점 목록 조회 실패: {exc}")
+        return []
+
+
+def upsert_branch(branch_id: str, name: str, username: str, password: str, region: str | None = None) -> bool:
+    """지점 계정 생성/갱신 (비밀번호는 해시 저장)."""
+    conn = get_connection()
+    if conn is None:
+        return False
+    try:
+        with _lock:
+            conn.execute(
+                """
+                INSERT INTO branches (branch_id, name, region, username, password_hash)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(branch_id) DO UPDATE SET
+                    name=excluded.name, region=excluded.region,
+                    username=excluded.username, password_hash=excluded.password_hash
+                """,
+                (branch_id, name, region, username, _hash_pw(password)),
+            )
+        return True
+    except Exception as exc:
+        print(f"[db] 지점 저장 실패: {exc}")
+        return False
+
+
+def seed_demo_branches() -> None:
+    """데모용 지점 계정 시드 (branches 비어있을 때만)."""
+    if list_branches():
+        return
+    demo = [
+        ("seocho-01", "서초구 서초1동", "seocho", "seocho1234", "서울특별시 서초구"),
+        ("gangnam-01", "강남구 역삼1동", "gangnam", "gangnam1234", "서울특별시 강남구"),
+    ]
+    for bid, name, user, pw, region in demo:
+        upsert_branch(bid, name, user, pw, region)
+    print(f"[db] 데모 지점 계정 {len(demo)}개 시드 완료")
