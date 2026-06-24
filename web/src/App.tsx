@@ -103,17 +103,19 @@ const serializeMessages = (items: ChatMessage[]) => JSON.stringify(items.map(ser
 export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [sessionEnded, setSessionEnded] = useState(false)
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
-  const [authChecked, setAuthChecked] = useState(false)
+  // localStorage로 즉시 렌더(흰 화면 방지). 서버 응답이 오면 아래 effect가 보정한다.
+  const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem(AUTH_KEY) === 'true')
   const [branchName, setBranchName] = useState<string | null>(null)
   const seenIds = useRef<Set<string>>(new Set())
   const channelRef = useRef<BroadcastChannel | null>(null)
 
-  // 인증은 서버 세션(쿠키)을 진짜 기준으로 검증한다.
-  // → localStorage 플래그만 위조해서 우회하던 문제를 차단하고, 지점 ID를 복원한다.
+  // 서버 세션(쿠키)으로 인증을 보정 + 지점명 복원.
+  // 렌더를 막지 않으므로, 이 요청이 느리거나 실패해도 화면은 정상 동작한다.
   useEffect(() => {
     let cancelled = false
-    fetch('/api/auth/status', { credentials: 'include' })
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 6000) // 느린 응답에 매달리지 않음
+    fetch('/api/auth/status', { credentials: 'include', signal: controller.signal })
       .then((res) => res.json())
       .then((data) => {
         if (cancelled) return
@@ -130,14 +132,13 @@ export default function App() {
         }
       })
       .catch(() => {
-        // 백엔드 미연결(오프라인 데모)일 때만 localStorage 폴백
-        if (!cancelled) setIsAuthenticated(localStorage.getItem(AUTH_KEY) === 'true')
+        // 타임아웃/네트워크 실패: localStorage 초기값을 그대로 유지(흰 화면 없음)
       })
-      .finally(() => {
-        if (!cancelled) setAuthChecked(true)
-      })
+      .finally(() => clearTimeout(timer))
     return () => {
       cancelled = true
+      clearTimeout(timer)
+      controller.abort()
     }
   }, [])
 
@@ -260,11 +261,6 @@ export default function App() {
     localStorage.removeItem(SESSION_KEY)
     channelRef.current?.postMessage({ type: 'session_reset', payload: null })
   }, [])
-
-  // 서버 인증 확인 전에는 라우트를 그리지 않는다 (보호 페이지가 깜빡 후 로그인으로 튕기는 것 방지)
-  if (!authChecked) {
-    return null
-  }
 
   return (
     <>
