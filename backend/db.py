@@ -132,6 +132,13 @@ def init_db() -> bool:
                     created_at     TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
                 )
             """)
+            # 기존 DB 호환: branch_id 컬럼이 없으면 추가 (데이터 보존 마이그레이션).
+            # fresh DB는 이미 위 CREATE에 컬럼이 있어 건너뛴다 (idempotent).
+            for _table in ("citizen_sessions", "prediction_logs", "consultations"):
+                _cols = [r[1] for r in conn.execute(f"PRAGMA table_info({_table})").fetchall()]
+                if "branch_id" not in _cols:
+                    conn.execute(f"ALTER TABLE {_table} ADD COLUMN branch_id TEXT")
+                    print(f"[db] 마이그레이션: {_table}.branch_id 컬럼 추가")
         print(f"[db] SQLite 테이블 초기화 완료 ({_db_path()})")
         seed_demo_branches()  # 데모 지점 계정 (비어있을 때만)
         return True
