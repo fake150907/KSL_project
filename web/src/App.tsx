@@ -48,6 +48,7 @@ import KakaoCallback from './pages/KakaoCallback'
 import KioskLaunchScreen from './pages/KioskLaunchScreen'
 import CitizenKiosk from './pages/CitizenKiosk'
 import { MEDIAPIPE_MODE_STORAGE_KEY, SCENARIO_MODE_STORAGE_KEY } from './hooks/useSignLanguage'
+import { setBranchId } from './socket'
 
 const CHANNEL_NAME = 'sign-lang-chat'
 const STORAGE_KEY = 'sign-lang-messages'
@@ -66,6 +67,20 @@ function RequireAuth({ isAuthenticated, children }: { isAuthenticated: boolean; 
   }
 
   return children
+}
+
+/**
+ * 현재 로그인한 지점을 화면 구석에 표시하는 배지.
+ * 어느 동사무소(지점)에 연결돼 있는지 눈으로 확인 가능하게 한다.
+ * pointer-events-none 으로 클릭을 막지 않는다.
+ */
+function BranchBadge({ name }: { name: string }) {
+  return (
+    <div className="pointer-events-none fixed bottom-3 left-3 z-[9999] flex items-center gap-1.5 rounded-full bg-slate-900/80 px-3 py-1.5 text-xs font-medium text-white shadow-lg backdrop-blur">
+      <span aria-hidden>🏢</span>
+      <span>{name}</span>
+    </div>
+  )
 }
 
 const normalizeTimestamp = (timestamp: Date | string | number | null | undefined) => {
@@ -88,24 +103,43 @@ const serializeMessages = (items: ChatMessage[]) => JSON.stringify(items.map(ser
 export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [sessionEnded, setSessionEnded] = useState(false)
+  // localStorage로 즉시 렌더(흰 화면 방지). 서버 응답이 오면 아래 effect가 보정한다.
   const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem(AUTH_KEY) === 'true')
+  const [branchName, setBranchName] = useState<string | null>(null)
   const seenIds = useRef<Set<string>>(new Set())
   const channelRef = useRef<BroadcastChannel | null>(null)
 
-  // localStorage 우회 차단: 마운트 시 서버 세션 실제 검증
+  // 서버 세션(쿠키)으로 인증을 보정 + 지점명 복원.
+  // 렌더를 막지 않으므로, 이 요청이 느리거나 실패해도 화면은 정상 동작한다.
   useEffect(() => {
-    fetch('/api/auth/status', { credentials: 'include' })
-      .then((r) => r.json())
-      .then((data: { authenticated: boolean }) => {
-        if (!data.authenticated) {
-          localStorage.removeItem(AUTH_KEY)
+    let cancelled = false
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 6000) // 느린 응답에 매달리지 않음
+    fetch('/api/auth/status', { credentials: 'include', signal: controller.signal })
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return
+        if (data?.authenticated) {
+          setIsAuthenticated(true)
+          setBranchId(data.branch_id ?? null)
+          setBranchName(data.branch_name ?? null)
+          localStorage.setItem(AUTH_KEY, 'true')
+        } else {
           setIsAuthenticated(false)
+          setBranchId(null)
+          setBranchName(null)
+          localStorage.removeItem(AUTH_KEY)
         }
       })
       .catch(() => {
-        localStorage.removeItem(AUTH_KEY)
-        setIsAuthenticated(false)
+        // 타임아웃/네트워크 실패: localStorage 초기값을 그대로 유지(흰 화면 없음)
       })
+      .finally(() => clearTimeout(timer))
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+      controller.abort()
+    }
   }, [])
 
   useEffect(() => {
@@ -179,8 +213,10 @@ export default function App() {
     return () => channel.close()
   }, [])
 
-  const handleLogin = () => {
+  const handleLogin = (info?: { branch_id?: string | null; branch_name?: string | null }) => {
     localStorage.setItem(AUTH_KEY, 'true')
+    setBranchId(info?.branch_id ?? null)
+    setBranchName(info?.branch_name ?? null)
     setIsAuthenticated(true)
   }
 
@@ -189,6 +225,8 @@ export default function App() {
       await fetch('/api/logout', { method: 'POST', credentials: 'include' })
     } catch {}
     localStorage.removeItem(AUTH_KEY)
+    setBranchId(null)
+    setBranchName(null)
     setIsAuthenticated(false)
   }
 
@@ -227,6 +265,7 @@ export default function App() {
   return (
     <>
     <FrontendErrorReporter />
+    {isAuthenticated && branchName && <BranchBadge name={branchName} />}
     <Routes>
       <Route path="/" element={<LoginPage onLogin={handleLogin} />} />
       <Route
