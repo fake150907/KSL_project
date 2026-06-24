@@ -8,7 +8,7 @@ from pathlib import Path
 
 from flask import Blueprint, Response, jsonify, request, send_from_directory
 
-from auth.routes import login_required
+from auth.routes import current_branch_id, login_required
 from config import Config
 from inference.model_loader import ensure_models_loaded
 import inference.model_state as model_state
@@ -331,7 +331,7 @@ def predict():
             )
         if prediction.get("segment_finalized") and prediction.get("raw_label"):
             try:
-                _db.save_prediction_log(prediction, client_id)
+                _db.save_prediction_log(prediction, client_id, branch_id=current_branch_id())
             except Exception:
                 pass
         return jsonify({"prediction": prediction, "frame_id": frame_id}), 200
@@ -463,7 +463,7 @@ def predict_landmarks():
         prediction["process_ms"] = round((time.perf_counter() - t0) * 1000, 1)
         if prediction.get("segment_finalized") and prediction.get("raw_label"):
             try:
-                _db.save_prediction_log(prediction, client_id)
+                _db.save_prediction_log(prediction, client_id, branch_id=current_branch_id())
             except Exception:
                 pass
         return jsonify({"frame_id": frame_id, "prediction": prediction}), 200

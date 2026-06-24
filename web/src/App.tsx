@@ -48,6 +48,7 @@ import KakaoCallback from './pages/KakaoCallback'
 import KioskLaunchScreen from './pages/KioskLaunchScreen'
 import CitizenKiosk from './pages/CitizenKiosk'
 import { MEDIAPIPE_MODE_STORAGE_KEY, SCENARIO_MODE_STORAGE_KEY } from './hooks/useSignLanguage'
+import { setBranchId } from './socket'
 
 const CHANNEL_NAME = 'sign-lang-chat'
 const STORAGE_KEY = 'sign-lang-messages'
@@ -88,9 +89,40 @@ const serializeMessages = (items: ChatMessage[]) => JSON.stringify(items.map(ser
 export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [sessionEnded, setSessionEnded] = useState(false)
-  const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem(AUTH_KEY) === 'true')
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [authChecked, setAuthChecked] = useState(false)
   const seenIds = useRef<Set<string>>(new Set())
   const channelRef = useRef<BroadcastChannel | null>(null)
+
+  // 인증은 서버 세션(쿠키)을 진짜 기준으로 검증한다.
+  // → localStorage 플래그만 위조해서 우회하던 문제를 차단하고, 지점 ID를 복원한다.
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/auth/status', { credentials: 'include' })
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return
+        if (data?.authenticated) {
+          setIsAuthenticated(true)
+          setBranchId(data.branch_id ?? null)
+          localStorage.setItem(AUTH_KEY, 'true')
+        } else {
+          setIsAuthenticated(false)
+          setBranchId(null)
+          localStorage.removeItem(AUTH_KEY)
+        }
+      })
+      .catch(() => {
+        // 백엔드 미연결(오프라인 데모)일 때만 localStorage 폴백
+        if (!cancelled) setIsAuthenticated(localStorage.getItem(AUTH_KEY) === 'true')
+      })
+      .finally(() => {
+        if (!cancelled) setAuthChecked(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     const mode = new URLSearchParams(window.location.search).get('mp')
@@ -163,8 +195,9 @@ export default function App() {
     return () => channel.close()
   }, [])
 
-  const handleLogin = () => {
+  const handleLogin = (info?: { branch_id?: string | null }) => {
     localStorage.setItem(AUTH_KEY, 'true')
+    setBranchId(info?.branch_id ?? null)
     setIsAuthenticated(true)
   }
 
@@ -173,6 +206,7 @@ export default function App() {
       await fetch('/api/logout', { method: 'POST', credentials: 'include' })
     } catch {}
     localStorage.removeItem(AUTH_KEY)
+    setBranchId(null)
     setIsAuthenticated(false)
   }
 
@@ -207,6 +241,11 @@ export default function App() {
     localStorage.removeItem(SESSION_KEY)
     channelRef.current?.postMessage({ type: 'session_reset', payload: null })
   }, [])
+
+  // 서버 인증 확인 전에는 라우트를 그리지 않는다 (보호 페이지가 깜빡 후 로그인으로 튕기는 것 방지)
+  if (!authChecked) {
+    return null
+  }
 
   return (
     <>
