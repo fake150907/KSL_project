@@ -1442,7 +1442,9 @@ export function useSignLanguage(
     }
 
     const responseFrameId = Number(data.frame_id ?? data.prediction?.frame_id ?? frameId)
-    if (responseFrameId < latestFrameIdRef.current) return
+    // client 모드는 전송을 직렬화해 응답이 순서대로 옴(검출은 더 빠르게 진행되므로
+    // frame_id는 항상 뒤처짐). 이 경우 stale로 버리면 인식 결과가 영영 적용되지 않음.
+    if (responseFrameId < latestFrameIdRef.current && selectedMediaPipeMode !== 'client') return
     if (!data.prediction) return
 
     // client 모드는 captureAndSend에서 로컬 결과로 이미 그림 → echo 재그리기 생략(stale 방지)
