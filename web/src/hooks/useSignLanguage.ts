@@ -239,6 +239,7 @@ export function useSignLanguage(
   const isMounted = useRef(true)
 
   const isPredictingRef = useRef(false)
+  const clientPostInFlightRef = useRef(false)
   const nextFrameIdRef = useRef(0)
   const latestFrameIdRef = useRef(0)
   const clientIdRef = useRef<string>(Math.random().toString(36).substring(7))
@@ -1444,7 +1445,8 @@ export function useSignLanguage(
     if (responseFrameId < latestFrameIdRef.current) return
     if (!data.prediction) return
 
-    if (data.prediction.landmarks && isRunningRef.current) {
+    // client 모드는 captureAndSend에서 로컬 결과로 이미 그림 → echo 재그리기 생략(stale 방지)
+    if (data.prediction.landmarks && isRunningRef.current && selectedMediaPipeMode !== 'client') {
       const overlayCtx = landmarkCanvasRef.current?.getContext('2d')
       if (overlayCtx) drawLandmarks(overlayCtx, data.prediction.landmarks)
     }
@@ -1613,20 +1615,31 @@ export function useSignLanguage(
       try {
         const runtime = await getClientMediaPipeRuntime()
         const clientResult = runtime.detect(canvasRef.current, performance.now())
-        const data = await postClientLandmarks(frameId, {
-          landmarks: clientResult.landmarks,
-          has_hand: clientResult.hasHand,
-          has_pose: clientResult.hasPose,
-          client_mediapipe_ms: Number(clientResult.processMs.toFixed(1)),
-          run_model: frameId % MODEL_INFERENCE_EVERY_N_FRAMES === 0,
-        })
-        handlePredictionData(data, frameId)
-      } catch (err: any) {
-        if (err.name !== 'AbortError') {
-          console.error('Failed to run client MediaPipe:', err)
-        }
-      } finally {
+        // 1) 오버레이는 로컬 결과로 즉시 그림 → 네트워크 왕복을 안 기다려 실시간
+        const overlayCtx = landmarkCanvasRef.current?.getContext('2d')
+        if (overlayCtx) drawLandmarks(overlayCtx, clientResult.landmarks)
+        // 2) 검출/그리기는 전송을 안 기다림 → 가드 즉시 해제(다음 프레임 진행)
         isPredictingRef.current = false
+        // 3) 예측 전송은 직렬화(겹침/순서꼬임 방지)하되 그리기를 막지 않음.
+        //    응답의 랜드마크 재그리기는 생략(이미 로컬로 그림).
+        if (!clientPostInFlightRef.current) {
+          clientPostInFlightRef.current = true
+          postClientLandmarks(frameId, {
+            landmarks: clientResult.landmarks,
+            has_hand: clientResult.hasHand,
+            has_pose: clientResult.hasPose,
+            client_mediapipe_ms: Number(clientResult.processMs.toFixed(1)),
+            run_model: frameId % MODEL_INFERENCE_EVERY_N_FRAMES === 0,
+          })
+            .then((data) => handlePredictionData(data, frameId))
+            .catch((err: any) => {
+              if (err?.name !== 'AbortError') console.error('predict_landmarks failed:', err)
+            })
+            .finally(() => { clientPostInFlightRef.current = false })
+        }
+      } catch (err: any) {
+        isPredictingRef.current = false
+        if (err.name !== 'AbortError') console.error('Failed to run client MediaPipe:', err)
       }
       return
     }
