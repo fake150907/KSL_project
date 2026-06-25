@@ -329,7 +329,7 @@ export default function CitizenKiosk({
 
     if (!accessToken && !refreshToken) {
       const redirectUri = encodeURIComponent(window.location.origin + '/kakao/callback');
-      const clientId = 'dbc36d320c333e45410fe1f7b642fd11'; 
+      const clientId = import.meta.env.VITE_KAKAO_REST_API_KEY || '0e2759b9bf776ec07397d4db113ee17b';
       
       // 💡 [핵심 해결 코드] 기존 주소 맨 끝에 &prompt=login 을 추가합니다.
       // 이렇게 하면 브라우저에 쿠키가 남아있어도 무조건 카카오 계정 로그인 화면이 뜹니다.
