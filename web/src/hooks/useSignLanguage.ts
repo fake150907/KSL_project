@@ -210,7 +210,7 @@ export function useSignLanguage(
     const queryMode = new URLSearchParams(window.location.search).get('mp')
     const envMode = import.meta.env.VITE_MEDIAPIPE_AB_MODE
     const storedMode = localStorage.getItem(MEDIAPIPE_MODE_STORAGE_KEY)
-    const rawMode = mediaPipeProcessingMode || queryMode || storedMode || envMode || 'server'
+    const rawMode = mediaPipeProcessingMode || queryMode || storedMode || envMode || 'client'
     const normalizedMode = rawMode === 'client' ? 'client' : 'server'
     if (queryMode === 'client' || queryMode === 'server') {
       localStorage.setItem(MEDIAPIPE_MODE_STORAGE_KEY, normalizedMode)
