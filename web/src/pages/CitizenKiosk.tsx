@@ -333,7 +333,9 @@ export default function CitizenKiosk({
       
       // 💡 [핵심 해결 코드] 기존 주소 맨 끝에 &prompt=login 을 추가합니다.
       // 이렇게 하면 브라우저에 쿠키가 남아있어도 무조건 카카오 계정 로그인 화면이 뜹니다.
-      const loginUrl = `https://kauth.kakao.com/oauth/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&prompt=login`;
+      // scope=talk_message: 상담 요약을 "나에게 보내기"로 전송하려면 이 권한 동의가 필요.
+      // (카카오 콘솔 동의항목에서도 talk_message가 "사용"이어야 함)
+      const loginUrl = `https://kauth.kakao.com/oauth/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=talk_message&prompt=login`;
       
       const popup = window.open(loginUrl, 'kakaoLogin', 'width=450,height=600');
       
