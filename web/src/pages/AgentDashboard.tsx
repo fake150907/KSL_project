@@ -88,6 +88,12 @@ export default function AgentDashboard({
   const [taskType, setTaskType] = useState('복지카드 재발급')
   const [welfareThemeMode, setWelfareThemeMode] = useState<WelfareThemeMode>('light')
 
+  // 수어 인식 결과 수정(오인식 교정) — /api/correction 으로 재학습용 라벨 기록
+  const [correctionOpen, setCorrectionOpen] = useState(false)
+  const [correctionInput, setCorrectionInput] = useState('')
+  const [correctionPredicted, setCorrectionPredicted] = useState('')
+  const [correctionStatus, setCorrectionStatus] = useState<'idle' | 'saving' | 'done' | 'error'>('idle')
+
   const isDarkMode = welfareThemeMode === 'dark'
 
   const handleSpeechMessage = useCallback((msg: ChatMessageType) => {
@@ -105,6 +111,37 @@ export default function AgentDashboard({
     () => [...messages].reverse().find((message) => message.sender === 'agent')?.text || '',
     [messages],
   )
+
+  const openCorrection = useCallback(() => {
+    setCorrectionPredicted(latestCitizenText)
+    setCorrectionInput(latestCitizenText)
+    setCorrectionStatus('idle')
+    setCorrectionOpen(true)
+  }, [latestCitizenText])
+
+  const submitCorrection = useCallback(async () => {
+    const corrected = correctionInput.trim()
+    if (!corrected) return
+    setCorrectionStatus('saving')
+    try {
+      const res = await fetch('/api/correction', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          predicted_label: correctionPredicted,
+          corrected_label: corrected,
+          corrected_by: 'agent',
+        }),
+      })
+      if (!res.ok) throw new Error('correction failed')
+      setCorrectionStatus('done')
+      setCorrectionOpen(false)
+      window.setTimeout(() => setCorrectionStatus('idle'), 2500)
+    } catch {
+      setCorrectionStatus('error')
+    }
+  }, [correctionInput, correctionPredicted])
 
   useEffect(() => {
     registerRole('agent')
@@ -433,8 +470,52 @@ export default function AgentDashboard({
 
           <div className={`grid min-w-0 gap-3 p-4 sm:grid-cols-2 ${isDarkMode ? 'bg-[#0f172a]' : 'bg-slate-50'}`}>
             <div className={`min-h-[104px] min-w-0 rounded-lg border p-4 md:min-h-[124px] ${isDarkMode ? 'border-emerald-700/50 bg-[#121b2b]' : 'border-emerald-200 bg-white'}`}>
-              <p className={`text-sm font-black ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>민원인 발화</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className={`text-sm font-black ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>민원인 발화</p>
+                {correctionStatus === 'done' ? (
+                  <span className="shrink-0 text-xs font-bold text-emerald-500">인식 수정 저장됨 ✓</span>
+                ) : latestCitizenText && !correctionOpen ? (
+                  <button
+                    type="button"
+                    onClick={openCorrection}
+                    title="수어 인식 결과가 틀렸을 때 올바른 해석을 기록합니다 (모델 재학습용)"
+                    className={`shrink-0 rounded px-2 py-0.5 text-xs font-bold transition ${isDarkMode ? 'text-emerald-300 hover:bg-emerald-900/40' : 'text-emerald-700 hover:bg-emerald-50'}`}
+                  >
+                    ✎ 인식 수정
+                  </button>
+                ) : null}
+              </div>
               <p className={`mt-3 break-words text-base font-black leading-relaxed md:text-lg ${isDarkMode ? 'text-slate-100' : 'text-slate-950'}`}>{latestCitizenText || '민원인의 수어/문자 입력을 기다리고 있습니다.'}</p>
+              {correctionOpen && (
+                <div className="mt-3 space-y-2">
+                  <input
+                    value={correctionInput}
+                    onChange={(event) => setCorrectionInput(event.target.value)}
+                    onKeyDown={(event) => { if (event.key === 'Enter') submitCorrection() }}
+                    placeholder="올바른 수어 해석을 입력하세요"
+                    autoFocus
+                    className={`w-full rounded border px-2 py-1.5 text-sm font-semibold outline-none ${isDarkMode ? 'border-emerald-700 bg-[#0f172a] text-slate-100' : 'border-emerald-300 bg-white text-slate-900'}`}
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={submitCorrection}
+                      disabled={correctionStatus === 'saving' || !correctionInput.trim()}
+                      className="rounded bg-emerald-600 px-3 py-1 text-xs font-bold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+                    >
+                      {correctionStatus === 'saving' ? '저장 중...' : '저장'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setCorrectionOpen(false); setCorrectionStatus('idle') }}
+                      className={`rounded px-3 py-1 text-xs font-bold transition ${isDarkMode ? 'text-slate-300 hover:bg-slate-700' : 'text-slate-600 hover:bg-slate-100'}`}
+                    >
+                      취소
+                    </button>
+                    {correctionStatus === 'error' && <span className="text-xs font-bold text-red-500">저장 실패</span>}
+                  </div>
+                </div>
+              )}
             </div>
             <div className={`min-h-[104px] min-w-0 rounded-lg border p-4 md:min-h-[124px] ${isDarkMode ? 'border-blue-700/50 bg-[#121b2b]' : 'border-blue-200 bg-white'}`}>
               <p className={`text-sm font-black ${isDarkMode ? 'text-blue-400' : 'text-blue-700'}`}>상담원 응답</p>
