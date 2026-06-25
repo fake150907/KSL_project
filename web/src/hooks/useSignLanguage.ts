@@ -1824,9 +1824,13 @@ export function useSignLanguage(
 
   useEffect(() => {
     if (!isRunning) return
-    const interval = setInterval(captureAndSend, captureIntervalMs)
+    // 클라 모드는 브라우저에서 바로 처리(서버 왕복 없음)라 빠르게 폴링해도 됨.
+    // 60ms 고정이면 ~16fps에 묶이므로, 클라 모드만 20ms로 낮춰 30~40fps 확보.
+    // (in-flight 가드가 있어 처리보다 빨리 쌓이지 않음)
+    const intervalMs = selectedMediaPipeMode === 'client' ? 20 : captureIntervalMs
+    const interval = setInterval(captureAndSend, intervalMs)
     return () => clearInterval(interval)
-  }, [isRunning, captureAndSend, captureIntervalMs])
+  }, [isRunning, captureAndSend, captureIntervalMs, selectedMediaPipeMode])
 
   useEffect(() => {
     if (!isRunning) {
