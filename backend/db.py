@@ -159,21 +159,23 @@ def _get_encryption_key() -> bytes | None:
 
 
 def encrypt_value(value: str) -> str:
-    """AES-256-GCM으로 암호화 후 base64 반환. 키 없으면 원본 반환."""
+    """AES-256-GCM으로 암호화 후 base64 반환.
+
+    fail-closed: 키가 없거나 암호화에 실패하면 PII를 평문으로 저장하지 않도록
+    예외를 발생시킨다. (호출부의 try/except가 받아서 저장을 안전하게 중단함)
+    """
     if not value:
         return value
     key = _get_encryption_key()
     if key is None:
-        return value
-    try:
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-        aesgcm = AESGCM(key)
-        nonce = os.urandom(12)
-        encrypted = aesgcm.encrypt(nonce, value.encode("utf-8"), None)
-        return base64.b64encode(nonce + encrypted).decode("utf-8")
-    except Exception as exc:
-        print(f"[db] 암호화 실패: {exc}")
-        return value
+        raise RuntimeError(
+            "DB_ENCRYPTION_KEY가 설정되지 않아 암호화할 수 없습니다. 평문 저장을 막기 위해 중단합니다."
+        )
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    aesgcm = AESGCM(key)
+    nonce = os.urandom(12)
+    encrypted = aesgcm.encrypt(nonce, value.encode("utf-8"), None)
+    return base64.b64encode(nonce + encrypted).decode("utf-8")
 
 
 def decrypt_value(value: str) -> str:
@@ -227,14 +229,15 @@ def save_citizen_session(data: dict[str, Any], branch_id: str | None = None) -> 
     conn = get_connection()
     if conn is None:
         return None
-    masked_name  = _mask_name(str(data.get("name") or ""))
-    masked_phone = _mask_phone(str(data.get("phone") or ""))
-    masked_dob   = _mask_dob(str(data.get("dob") or ""))
-    stored_name  = encrypt_value(masked_name)
-    stored_phone = encrypt_value(masked_phone)
-    stored_dob   = encrypt_value(masked_dob)
-    gender       = str(data.get("gender") or "")
     try:
+        masked_name  = _mask_name(str(data.get("name") or ""))
+        masked_phone = _mask_phone(str(data.get("phone") or ""))
+        masked_dob   = _mask_dob(str(data.get("dob") or ""))
+        # 암호화는 try 안에서 — 키가 없으면 여기서 예외 → 평문 저장 없이 안전하게 중단
+        stored_name  = encrypt_value(masked_name)
+        stored_phone = encrypt_value(masked_phone)
+        stored_dob   = encrypt_value(masked_dob)
+        gender       = str(data.get("gender") or "")
         with _lock:
             cur = conn.execute(
                 """
