@@ -8,6 +8,7 @@ import { useWelfarePanel } from '../hooks/useWelfarePanel'
 import { WelfarePanel } from '../components/WelfarePanel'
 import { maskName, maskPhone } from '../components/hangul'
 import { socket, registerRole } from '../socket'
+import { PEER_CONNECTION_CONFIG } from '../hooks/webrtcConfig'
 
 interface CitizenKioskProps {
   messages: ChatMessageType[]
@@ -202,7 +203,7 @@ export default function CitizenKiosk({
     let iceQueue: RTCIceCandidateInit[] = [];
     let isRemoteDescriptionSet = false;
 
-    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    const pc = new RTCPeerConnection(PEER_CONNECTION_CONFIG);
     peerConnectionRef.current = pc;
     const stream = videoRef.current.srcObject as MediaStream;
     stream.getTracks().forEach((track) => pc.addTrack(track, stream));

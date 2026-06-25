@@ -6,6 +6,7 @@ import ChatMessage from '../components/ChatMessage'
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition'
 import { registerRole, socket } from '../socket'
 import { maskName } from '../components/hangul'
+import { PEER_CONNECTION_CONFIG } from '../hooks/webrtcConfig'
 
 interface AgentDashboardProps {
   messages: ChatMessageType[]
@@ -19,21 +20,6 @@ interface AgentDashboardProps {
 }
 
 type WelfareThemeMode = 'light' | 'dark'
-
-const ICE_SERVERS: RTCIceServer[] = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-  {
-    urls: 'turn:openrelay.metered.ca:80',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
-  {
-    urls: 'turn:openrelay.metered.ca:443',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
-]
 
 const VOICE_BAR_COLORS = ['#2563EB', '#38BDF8', '#22C55E', '#F59E0B', '#6366F1', '#14B8A6']
 
@@ -152,7 +138,7 @@ export default function AgentDashboard({
   }, [onNewMessage])
 
   useEffect(() => {
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS })
+    const pc = new RTCPeerConnection(PEER_CONNECTION_CONFIG)
     peerConnectionRef.current = pc
     const pendingCandidates: RTCIceCandidateInit[] = []
     let remoteDescriptionReady = false
