@@ -575,8 +575,21 @@ def purge_old_data(days: int = 30) -> dict[str, int]:
 # 지점(branches) 계정 — 지점별 로그인 / 목록 / 시드
 # ─────────────────────────────────────────────
 def _hash_pw(password: str) -> str:
+    from werkzeug.security import generate_password_hash
+    return generate_password_hash(str(password), method="scrypt")
+
+
+def _verify_pw(password: str, stored_hash: str) -> bool:
+    if not stored_hash:
+        return False
+    if "$" in stored_hash and ":" in stored_hash.split("$", 1)[0]:
+        try:
+            from werkzeug.security import check_password_hash
+            return check_password_hash(stored_hash, str(password))
+        except Exception:
+            return False
     import hashlib
-    return hashlib.sha256(str(password).encode("utf-8")).hexdigest()
+    return stored_hash == hashlib.sha256(str(password).encode("utf-8")).hexdigest()
 
 
 def get_branch_by_username(username: str) -> dict[str, Any] | None:
@@ -605,7 +618,7 @@ def verify_branch_login(username: str, password: str) -> dict[str, Any] | None:
     branch = get_branch_by_username(username)
     if branch is None:
         return None
-    if branch.get("password_hash") != _hash_pw(password):
+    if not _verify_pw(password, str(branch.get("password_hash") or "")):
         return None
     return {"branch_id": branch["branch_id"], "name": branch["name"], "region": branch.get("region")}
 

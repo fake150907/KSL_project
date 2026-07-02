@@ -1,4 +1,3 @@
-import { Step } from './hangul'
 import SignLanguageLogo from './SignLanguageLogo'
 
 const STEP_LABELS = ['이름', '생년월일', '성별', '연락처', '정보 확인']

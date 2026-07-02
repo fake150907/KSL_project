@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from datetime import timedelta
 
 
 def _require_env(name: str) -> str:
@@ -18,6 +19,10 @@ class Config:
     ADMIN_USERNAME: str      = os.environ.get("ADMIN_USERNAME", "admin")
     ADMIN_PASSWORD_HASH: str = _require_env("ADMIN_PASSWORD_HASH")
     SESSION_TIMEOUT: int   = int(os.environ.get("SESSION_TIMEOUT", "43200"))
+    PERMANENT_SESSION_LIFETIME = timedelta(seconds=SESSION_TIMEOUT)
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
+    SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "false").strip().lower() in {"1", "true", "yes"}
 
     KAKAO_REST_API_KEY: str   = os.environ.get("KAKAO_REST_API_KEY", "")
     KAKAO_CLIENT_SECRET: str  = os.environ.get("KAKAO_CLIENT_SECRET", "")

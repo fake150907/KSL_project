@@ -53,7 +53,6 @@ import { setBranchId } from './socket'
 const CHANNEL_NAME = 'sign-lang-chat'
 const STORAGE_KEY = 'sign-lang-messages'
 const SESSION_KEY = 'sign-lang-session'
-const AUTH_KEY = 'ksl-admin-authenticated'
 
 type IncomingChatMessage = Omit<ChatMessage, 'timestamp'> & {
   timestamp: Date | string | number
@@ -103,8 +102,7 @@ const serializeMessages = (items: ChatMessage[]) => JSON.stringify(items.map(ser
 export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [sessionEnded, setSessionEnded] = useState(false)
-  // localStorage로 즉시 렌더(흰 화면 방지). 서버 응답이 오면 아래 effect가 보정한다.
-  const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem(AUTH_KEY) === 'true')
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [branchName, setBranchName] = useState<string | null>(null)
   const seenIds = useRef<Set<string>>(new Set())
   const channelRef = useRef<BroadcastChannel | null>(null)
@@ -123,16 +121,16 @@ export default function App() {
           setIsAuthenticated(true)
           setBranchId(data.branch_id ?? null)
           setBranchName(data.branch_name ?? null)
-          localStorage.setItem(AUTH_KEY, 'true')
         } else {
           setIsAuthenticated(false)
           setBranchId(null)
           setBranchName(null)
-          localStorage.removeItem(AUTH_KEY)
         }
       })
       .catch(() => {
-        // 타임아웃/네트워크 실패: localStorage 초기값을 그대로 유지(흰 화면 없음)
+        setIsAuthenticated(false)
+        setBranchId(null)
+        setBranchName(null)
       })
       .finally(() => clearTimeout(timer))
     return () => {
@@ -214,7 +212,6 @@ export default function App() {
   }, [])
 
   const handleLogin = (info?: { branch_id?: string | null; branch_name?: string | null }) => {
-    localStorage.setItem(AUTH_KEY, 'true')
     setBranchId(info?.branch_id ?? null)
     setBranchName(info?.branch_name ?? null)
     setIsAuthenticated(true)
@@ -224,7 +221,6 @@ export default function App() {
     try {
       await fetch('/api/logout', { method: 'POST', credentials: 'include' })
     } catch {}
-    localStorage.removeItem(AUTH_KEY)
     setBranchId(null)
     setBranchName(null)
     setIsAuthenticated(false)

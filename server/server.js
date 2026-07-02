@@ -1,5 +1,13 @@
 import { Server } from "socket.io";
 import http from "http";
+import { pathToFileURL } from "url";
+
+const SIGNALING_TOKEN = (process.env.SIGNALING_TOKEN || "").trim();
+const ALLOWED_ORIGINS = (process.env.SIGNALING_ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const ALLOWED_ROLES = new Set(["agent", "kiosk"]);
 
 const server = http.createServer((req, res) => {
   // Railway/Cloud Run 헬스체크 / 생존 확인용 (socket.io 요청은 아래 io가 가로챔)
@@ -14,7 +22,7 @@ const server = http.createServer((req, res) => {
 
 const io = new Server(server, {
   cors: {
-    origin: true,
+    origin: ALLOWED_ORIGINS.length > 0 ? ALLOWED_ORIGINS : true,
     methods: ["GET", "POST"],
     credentials: true
   }
@@ -34,6 +42,22 @@ const iceCandidateQueue = {};     // targetSocketId -> candidate[]
 function rk(branchId, role) {
   return `${branchId || "_default"}:${role}`;
 }
+
+function normalizeBranchId(branchId) {
+  const value = String(branchId || "_default").trim();
+  return /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : null;
+}
+
+function isObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isAuthorized(socket, payload = {}) {
+  if (!SIGNALING_TOKEN) return true;
+  const token = payload.token || socket.handshake.auth?.token;
+  return token === SIGNALING_TOKEN;
+}
+
 function branchOf(socketId) {
   return connectedUsers[socketId]?.branchId || "_default";
 }
@@ -54,8 +78,20 @@ io.on("connection", (socket) => {
   console.log(`[연결됨] Socket ID: ${socket.id}`);
 
   // 1. 역할 + 지점 등록
-  socket.on("register", ({ role, branchId }) => {
-    const bid = branchId || "_default";
+  socket.on("register", (payload = {}) => {
+    if (!isObject(payload) || !isAuthorized(socket, payload)) {
+      socket.emit("register_error", { message: "Unauthorized signaling registration" });
+      socket.disconnect(true);
+      return;
+    }
+
+    const role = String(payload.role || "");
+    const bid = normalizeBranchId(payload.branchId);
+    if (!ALLOWED_ROLES.has(role) || !bid) {
+      socket.emit("register_error", { message: "Invalid role or branchId" });
+      return;
+    }
+
     connectedUsers[socket.id] = { role, branchId: bid };
     roleToSocketId[rk(bid, role)] = socket.id; // 같은 지점·역할 최신 소켓 갱신
     socket.join(rk(bid, role));
@@ -74,7 +110,9 @@ io.on("connection", (socket) => {
   });
 
   // 2. 민원인 접수 알림 (같은 지점 상담원에게만)
-  socket.on("citizen_arrived", ({ citizenData }) => {
+  socket.on("citizen_arrived", (payload = {}) => {
+    if (!isObject(payload)) return;
+    const { citizenData } = payload;
     const bid = branchOf(socket.id);
     console.log(`[민원인 도착] @ ${bid}`, citizenData);
     const agentRoom = io.sockets.adapter.rooms.get(rk(bid, "agent"));
@@ -118,7 +156,7 @@ io.on("connection", (socket) => {
   // 채팅 메시지 중계 (같은 지점 상담원↔민원인 양방향)
   socket.on("chat_message", (msg) => {
     const me = connectedUsers[socket.id];
-    if (!me) return;
+    if (!me || !isObject(msg) || typeof msg.text !== "string") return;
     const targetRole = me.role === "agent" ? "kiosk" : "agent";
     console.log(`[채팅] @ ${me.branchId} ${me.role} → ${targetRole}: ${msg.text}`);
     io.to(rk(me.branchId, targetRole)).emit("chat_message", msg);
@@ -138,7 +176,9 @@ io.on("connection", (socket) => {
   // WebRTC 시그널링 — target은 역할('kiosk'|'agent'),
   // 발신자의 지점(branchId) 안에서만 라우팅
   // ─────────────────────────────────────────
-  socket.on("webrtc_offer", ({ target, offer }) => {
+  socket.on("webrtc_offer", (payload = {}) => {
+    if (!isObject(payload) || !ALLOWED_ROLES.has(payload.target) || !isObject(payload.offer)) return;
+    const { target, offer } = payload;
     const bid = branchOf(socket.id);
     const targetSocketId = roleToSocketId[rk(bid, target)];
     console.log(`[WebRTC] Offer → ${rk(bid, target)} (${targetSocketId})`);
@@ -153,7 +193,9 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("webrtc_answer", ({ target, answer }) => {
+  socket.on("webrtc_answer", (payload = {}) => {
+    if (!isObject(payload) || !ALLOWED_ROLES.has(payload.target) || !isObject(payload.answer)) return;
+    const { target, answer } = payload;
     const bid = branchOf(socket.id);
     const targetSocketId = roleToSocketId[rk(bid, target)];
     console.log(`[WebRTC] Answer → ${rk(bid, target)} (${targetSocketId})`);
@@ -168,7 +210,9 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("webrtc_ice_candidate", ({ target, candidate }) => {
+  socket.on("webrtc_ice_candidate", (payload = {}) => {
+    if (!isObject(payload) || !ALLOWED_ROLES.has(payload.target) || !payload.candidate) return;
+    const { target, candidate } = payload;
     const bid = branchOf(socket.id);
     const targetSocketId = roleToSocketId[rk(bid, target)];
     if (!targetSocketId) return;
@@ -199,6 +243,10 @@ io.on("connection", (socket) => {
 });
 
 const PORT = process.env.PORT || 5001;
-server.listen(PORT, () => {
-  console.log(`🚀 시그널링 서버 포트 ${PORT}`);
-});
+if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
+  server.listen(PORT, () => {
+    console.log(`🚀 시그널링 서버 포트 ${PORT}`);
+  });
+}
+
+export { normalizeBranchId, rk, isObject };

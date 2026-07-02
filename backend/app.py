@@ -8,6 +8,8 @@ load_dotenv()
 
 import os
 import sys
+import threading
+import time
 from pathlib import Path
 
 from flask import Flask, request as flask_request
@@ -31,10 +33,32 @@ POSE_POINTS_V2 = 33
 HAND_POINTS_V2 = 21
 
 app = Flask(__name__)
+app.config.from_object(Config)
 app.secret_key = Config.FLASK_SECRET_KEY
 CORS(app, supports_credentials=True)
 
 _db.init_db()
+
+
+def _start_retention_worker() -> None:
+    if os.environ.get("DISABLE_RETENTION_WORKER", "").strip().lower() in {"1", "true", "yes"}:
+        return
+
+    retention_days = int(os.environ.get("DATA_RETENTION_DAYS", "30"))
+    interval_seconds = int(os.environ.get("RETENTION_INTERVAL_SECONDS", str(24 * 60 * 60)))
+
+    def run() -> None:
+        while True:
+            try:
+                _db.purge_old_data(retention_days)
+            except Exception as exc:
+                push_log("warning", "Backend", f"보존기간 삭제 실패: {exc}")
+            time.sleep(max(interval_seconds, 60))
+
+    threading.Thread(target=run, name="retention-worker", daemon=True).start()
+
+
+_start_retention_worker()
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(inference_bp)

@@ -116,10 +116,12 @@ def video_feed():
                     mimetype="multipart/x-mixed-replace; boundary=frame")
 
 @inference_bp.route("/validation_demos/<path:filename>", methods=["GET"])
+@login_required
 def validation_demo_video(filename: str):
     return send_from_directory(ROOT_DIR / "data" / "raw" / "validation_mp4", filename)
 
 @inference_bp.route("/api/gloss_to_text", methods=["POST"])
+@login_required
 def api_gloss_to_text():
     import re
     ensure_models_loaded()
@@ -163,6 +165,7 @@ def api_gloss_to_text():
     return jsonify({"gloss": gloss, "text": result}), 200
 
 @inference_bp.route("/api/predict", methods=["POST"])
+@login_required
 def predict():
     from flask import session as flask_session
     flask_session.modified = False
@@ -341,6 +344,7 @@ def predict():
         return jsonify({"error": str(exc)}), 500
 
 @inference_bp.route("/api/predict_landmarks", methods=["POST"])
+@login_required
 def predict_landmarks():
     t0 = time.perf_counter()
     try:
@@ -473,6 +477,7 @@ def predict_landmarks():
         return jsonify({"error": str(exc)}), 500
 
 @inference_bp.route("/api/correction", methods=["POST"])
+@login_required
 def api_correction():
     """오인식 수정 1건 기록. 모델 예측(predicted) vs 사람이 고친 정답(corrected) 저장."""
     data = request.get_json(silent=True) or {}
@@ -530,8 +535,9 @@ def kakao_token():
         result = resp.json()
         if resp.status_code != 200:
             return jsonify({"error": result.get("error_description") or str(result)}), resp.status_code
-        return jsonify({"access_token": result.get("access_token"),
-                        "refresh_token": result.get("refresh_token"),
-                        "expires_in": result.get("expires_in")}), 200
+        # 토큰을 서버 세션에 저장 — 프론트(localStorage)에 노출하지 않음
+        session["kakao_access_token"] = result.get("access_token")
+        session["kakao_refresh_token"] = result.get("refresh_token")
+        return jsonify({"ok": True, "expires_in": result.get("expires_in")}), 200
     except Exception as exc:
         return jsonify({"error": f"카카오 토큰 발급 실패: {exc}"}), 502
