@@ -8,7 +8,7 @@ from pathlib import Path
 
 from flask import Blueprint, Response, jsonify, request, send_from_directory
 
-from auth.routes import login_required
+from auth.routes import current_branch_id, login_required
 from config import Config
 from inference.model_loader import ensure_models_loaded
 import inference.model_state as model_state
@@ -39,6 +39,7 @@ from inference.predictor import (
 )
 from src.services.gloss_to_text_service import gloss_to_text
 from src.utils.config import load_config
+import db as _db
 
 inference_bp = Blueprint("inference", __name__)
 
@@ -115,10 +116,12 @@ def video_feed():
                     mimetype="multipart/x-mixed-replace; boundary=frame")
 
 @inference_bp.route("/validation_demos/<path:filename>", methods=["GET"])
+@login_required
 def validation_demo_video(filename: str):
     return send_from_directory(ROOT_DIR / "data" / "raw" / "validation_mp4", filename)
 
 @inference_bp.route("/api/gloss_to_text", methods=["POST"])
+@login_required
 def api_gloss_to_text():
     import re
     ensure_models_loaded()
@@ -162,6 +165,7 @@ def api_gloss_to_text():
     return jsonify({"gloss": gloss, "text": result}), 200
 
 @inference_bp.route("/api/predict", methods=["POST"])
+@login_required
 def predict():
     from flask import session as flask_session
     flask_session.modified = False
@@ -198,6 +202,8 @@ def predict():
         demo_video_time_sec   = request.form.get("demo_video_time_sec")
         demo_segment_start_sec = request.form.get("demo_segment_start_sec")
         demo_finalize_reason  = request.form.get("demo_finalize_reason") or request.form.get("live_finalize_reason")
+        _hints_str = request.form.get("scenario_sen_hints") or ""
+        scenario_sen_hints: list[str] | None = [s.strip() for s in _hints_str.split(",") if s.strip()] or None
 
         window = get_session_window(client_id)
 
@@ -228,14 +234,15 @@ def predict():
                              "segment_finalized": True, "segment_frames": len(seg_frames)})
                 if scenario_mode and ("word_v2" in sequence_models or "sentence_v2" in sequence_models):
                     try:
-                        dual = predict_dual_scenario(seg_frames, seq_len, temperature, use_tta)
+                        dual = predict_dual_scenario(seg_frames, seq_len, temperature, use_tta,
+                                                     restrict_sen_ids=scenario_sen_hints)
                         pred["scenario"] = dual
                         if dual.get("scenario_text"):
                             pred["scenario_text"] = dual["scenario_text"]
-                        # 임시 디버그 로그 추가
+                        # 디버그 로그
                         print(f"[dual] word={dual.get('word', {}).get('label')} word_conf={dual.get('word', {}).get('confidence', 0):.3f}")
                         print(f"[dual] sen={dual.get('sentence', {}).get('label')} sen_conf={dual.get('sentence', {}).get('confidence', 0):.3f}")
-                        print(f"[dual] lookup_hit={dual.get('lookup_hit')} scenario_text={dual.get('scenario_text')}")
+                        print(f"[dual] hints={scenario_sen_hints} lookup_hit={dual.get('lookup_hit')} scenario_text={dual.get('scenario_text')}")
                         print(f"[dual] fusion_candidates={dual.get('fusion_candidates', [])[:2]}")
                     except Exception as exc:
                         pred["scenario_error"] = str(exc)
@@ -325,6 +332,11 @@ def predict():
                 f" scenario={prediction.get('scenario', {}).get('lookup_key') if prediction.get('scenario') else None}"
                 f" top={prediction.get('top_predictions', [])[:2]}"
             )
+        if prediction.get("segment_finalized") and prediction.get("raw_label"):
+            try:
+                _db.save_prediction_log(prediction, client_id, branch_id=current_branch_id())
+            except Exception:
+                pass
         return jsonify({"prediction": prediction, "frame_id": frame_id}), 200
 
     except Exception as exc:
@@ -332,6 +344,7 @@ def predict():
         return jsonify({"error": str(exc)}), 500
 
 @inference_bp.route("/api/predict_landmarks", methods=["POST"])
+@login_required
 def predict_landmarks():
     t0 = time.perf_counter()
     try:
@@ -367,6 +380,9 @@ def predict_landmarks():
         demo_video_time_sec   = data.get("demo_video_time_sec")
         demo_segment_start_sec = data.get("demo_segment_start_sec")
         demo_finalize_reason  = data.get("demo_finalize_reason") or data.get("live_finalize_reason")
+        _hints_raw = data.get("scenario_sen_hints") or ""
+        _hints_str2 = _hints_raw if isinstance(_hints_raw, str) else ",".join(_hints_raw) if isinstance(_hints_raw, list) else ""
+        scenario_sen_hints2: list[str] | None = [s.strip() for s in _hints_str2.split(",") if s.strip()] or None
 
         window = get_session_window(client_id)
 
@@ -400,10 +416,12 @@ def predict_landmarks():
                              "segment_finalized": True, "segment_frames": len(seg_frames)})
                 if scenario_mode and ("word_v2" in sequence_models or "sentence_v2" in sequence_models):
                     try:
-                        dual = predict_dual_scenario(seg_frames, seq_len, temperature, use_tta)
+                        dual = predict_dual_scenario(seg_frames, seq_len, temperature, use_tta,
+                                                     restrict_sen_ids=scenario_sen_hints2)
                         pred["scenario"] = dual
                         if dual.get("scenario_text"):
                             pred["scenario_text"] = dual["scenario_text"]
+                        print(f"[dual/lm] hints={scenario_sen_hints2} lookup_hit={dual.get('lookup_hit')} scenario_text={dual.get('scenario_text')}")
                     except Exception as exc:
                         pred["scenario_error"] = str(exc)
                 if label and conf >= confidence_threshold:
@@ -447,11 +465,37 @@ def predict_landmarks():
                     prediction["window_progress"] = len(window)
 
         prediction["process_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+        if prediction.get("segment_finalized") and prediction.get("raw_label"):
+            try:
+                _db.save_prediction_log(prediction, client_id, branch_id=current_branch_id())
+            except Exception:
+                pass
         return jsonify({"frame_id": frame_id, "prediction": prediction}), 200
 
     except Exception as exc:
         traceback.print_exc()
         return jsonify({"error": str(exc)}), 500
+
+@inference_bp.route("/api/correction", methods=["POST"])
+@login_required
+def api_correction():
+    """오인식 수정 1건 기록. 모델 예측(predicted) vs 사람이 고친 정답(corrected) 저장."""
+    data = request.get_json(silent=True) or {}
+    predicted = str(data.get("predicted_label", "")).strip()
+    corrected = str(data.get("corrected_label", "")).strip()
+    if not corrected:
+        return jsonify({"error": "corrected_label이 필요합니다."}), 400
+    cid = _db.save_correction(
+        predicted_label=predicted or None,
+        corrected_label=corrected,
+        confidence=data.get("confidence"),
+        corrected_by=str(data.get("corrected_by", "")).strip() or None,
+        model_type=str(data.get("model_type", "")).strip() or None,
+        prediction_log_id=data.get("prediction_log_id"),
+        consultation_id=data.get("consultation_id"),
+    )
+    return jsonify({"id": cid, "ok": cid is not None}), 200
+
 
 @inference_bp.route("/api/kakao/login", methods=["GET"])
 def kakao_login():
@@ -491,8 +535,9 @@ def kakao_token():
         result = resp.json()
         if resp.status_code != 200:
             return jsonify({"error": result.get("error_description") or str(result)}), resp.status_code
-        return jsonify({"access_token": result.get("access_token"),
-                        "refresh_token": result.get("refresh_token"),
-                        "expires_in": result.get("expires_in")}), 200
+        # 토큰을 서버 세션에 저장 — 프론트(localStorage)에 노출하지 않음
+        session["kakao_access_token"] = result.get("access_token")
+        session["kakao_refresh_token"] = result.get("refresh_token")
+        return jsonify({"ok": True, "expires_in": result.get("expires_in")}), 200
     except Exception as exc:
         return jsonify({"error": f"카카오 토큰 발급 실패: {exc}"}), 502

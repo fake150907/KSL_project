@@ -103,6 +103,8 @@ export interface DemoScenario {
   mirrorForPrediction?: boolean
   relaxedSegmentation?: boolean
   forceScenarioMode?: boolean
+  /** 이 데모에서만 사용할 scenario label IDs (예: ['SEN0278', 'SEN0279']). 설정 시 해당 label로만 예측을 제한합니다. */
+  scenarioHints?: string[]
 }
 
 export const validationDemoScenarios: DemoScenario[] = [
@@ -123,6 +125,8 @@ export const validationDemoScenarios: DemoScenario[] = [
       boundariesSec: [7.068],
     },
     relaxedSegmentation: true,
+    // 2세그먼트(잃어버렸어요)에서 SEN0355(감사합니다) 오인식 방지 — SEN0322로 탐색 범위 제한
+    scenarioHints: ['SEN0322'],
     clips: [
       { id: 'resident_realz03_02_welfare_card_lost', src: 'data/raw/validation_mp4/resident_realz03_02_welfare_card_lost.mp4' },
     ],
@@ -147,6 +151,7 @@ export const validationDemoScenarios: DemoScenario[] = [
       boundariesSec: [5.067],
     },
     relaxedSegmentation: true,
+    scenarioHints: ['SEN0169', 'SEN0175'],
     clips: [
       { id: 'resident_realz03_04_id_here', src: 'data/raw/validation_mp4/resident_realz03_04_id_here.mp4' },
     ],
@@ -156,6 +161,7 @@ export const validationDemoScenarios: DemoScenario[] = [
     forceScenarioMode: true,
     segmentation: 'auto',
     relaxedSegmentation: true,
+    scenarioHints: ['SEN0278', 'SEN0279'],
     clips: [
       { id: 'resident_realz03_05_subway_lost', src: 'data/raw/validation_mp4/resident_realz03_05_subway_lost.mp4' },
     ],
@@ -218,7 +224,7 @@ export function useSignLanguage(
   const selectedScenarioMode = (() => {
     const queryMode = new URLSearchParams(window.location.search).get('scenario')
     const storedMode = localStorage.getItem(SCENARIO_MODE_STORAGE_KEY)
-    const rawMode = queryMode || storedMode || 'off'
+    const rawMode = queryMode || storedMode || 'resident'
     const enabled = ['1', 'true', 'yes', 'resident'].includes(rawMode.toLowerCase())
     if (queryMode) {
       localStorage.setItem(SCENARIO_MODE_STORAGE_KEY, enabled ? 'resident' : 'off')
@@ -236,6 +242,7 @@ export function useSignLanguage(
   const isMounted = useRef(true)
 
   const isPredictingRef = useRef(false)
+  const clientPostInFlightRef = useRef(false)
   const nextFrameIdRef = useRef(0)
   const latestFrameIdRef = useRef(0)
   const clientIdRef = useRef<string>(Math.random().toString(36).substring(7))
@@ -430,6 +437,9 @@ export function useSignLanguage(
   const shouldCommitScenarioText = (prediction: any): boolean => {
     const text = String(prediction?.scenario_text || '').trim()
     if (!text) return false
+    // 라이브 모드: 메인 모델이 성공했으면 scenario는 무시 (fallback 역할만)
+    // 메인 모델 실패(label=null)일 때만 안녕하세요 같은 SEN 결과를 사용
+    if (!isDemoModeRef.current && prediction?.label) return false
     if (isDemoModeRef.current && demoScenarioRef.current?.forceScenarioMode) {
       const hasManualBoundaries = getManualDemoBoundaries(demoScenarioRef.current).length > 0
       const source = String(prediction?.scenario?.lookup_source || '')
@@ -468,11 +478,11 @@ export function useSignLanguage(
     const parts = key.split('+').map((item) => item.trim()).filter(Boolean)
     if (parts.length === 0) return false
     const next = [...demoGlossBufferRef.current]
-parts.forEach((part) => {
-  if (next[next.length - 1] !== part) next.push(part)
-})
-demoGlossBufferRef.current = next
-return true
+    parts.forEach((part) => {
+      if (next[next.length - 1] !== part) next.push(part)
+    })
+    demoGlossBufferRef.current = next
+    return true
   }, [commitRecognizedWord])
 
   const convertDemoGlossToText = useCallback(async (scenario: DemoScenario) => {
@@ -618,6 +628,9 @@ return true
         formData.append('min_segment_frames', '8')
         formData.append('run_model', 'true')
         formData.append('scenario_mode', getEffectiveScenarioMode().toString())
+        if (scenario?.scenarioHints && scenario.scenarioHints.length > 0) {
+          formData.append('scenario_sen_hints', scenario.scenarioHints.join(','))
+        }
         if (forceFinalize) {
           const video = videoRef.current
           formData.append('tta_enabled', 'false')
@@ -636,6 +649,7 @@ return true
               demo_video_time_sec: (videoRef.current?.currentTime || 0).toFixed(3),
               demo_segment_start_sec: demoSegmentStartTimeRef.current.toFixed(3),
               demo_finalize_reason: demoFinalizeReasonRef.current || 'force_finalize',
+              ...(scenario?.scenarioHints?.length ? { scenario_sen_hints: scenario.scenarioHints.join(',') } : {}),
             })
           : await fetch('/api/predict', { method: 'POST', body: formData }).then((res) => res.json().catch(() => ({})))
         const prediction = data.prediction
@@ -1144,11 +1158,7 @@ return true
             at: Date.now(),
           },
         }))
-        console.log(
-          `[live segmentation] finalize reason=${finalizeReason}, ` +
-            `label=${pred.label}, conf=${pred.confidence?.toFixed(3)}, ` +
-            `segment_frames=${prediction.segment_frames}`,
-        )
+
       }
     } catch (err) {
       console.error('Failed to finalize live segment:', err)
@@ -1439,10 +1449,13 @@ return true
     }
 
     const responseFrameId = Number(data.frame_id ?? data.prediction?.frame_id ?? frameId)
-    if (responseFrameId < latestFrameIdRef.current) return
+    // client 모드는 전송을 직렬화해 응답이 순서대로 옴(검출은 더 빠르게 진행되므로
+    // frame_id는 항상 뒤처짐). 이 경우 stale로 버리면 인식 결과가 영영 적용되지 않음.
+    if (responseFrameId < latestFrameIdRef.current && selectedMediaPipeMode !== 'client') return
     if (!data.prediction) return
 
-    if (data.prediction.landmarks && isRunningRef.current) {
+    // client 모드는 captureAndSend에서 로컬 결과로 이미 그림 → echo 재그리기 생략(stale 방지)
+    if (data.prediction.landmarks && isRunningRef.current && selectedMediaPipeMode !== 'client') {
       const overlayCtx = landmarkCanvasRef.current?.getContext('2d')
       if (overlayCtx) drawLandmarks(overlayCtx, data.prediction.landmarks)
     }
@@ -1517,11 +1530,11 @@ return true
         return
       }
       const isForceScenarioDemo =
-  isDemoModeRef.current && demoScenarioRef.current?.forceScenarioMode
+        isDemoModeRef.current && demoScenarioRef.current?.forceScenarioMode
 
-if (!isForceScenarioDemo && pred.label && pred.confidence >= confidenceThreshold) {
-  commitRecognizedWord(pred.display_label || pred.label)
-}
+      if (!isForceScenarioDemo && pred.label && pred.confidence >= confidenceThreshold) {
+        commitRecognizedWord(pred.display_label || pred.label)
+      }
       return
     }
 
@@ -1614,20 +1627,31 @@ if (!isForceScenarioDemo && pred.label && pred.confidence >= confidenceThreshold
       try {
         const runtime = await getClientMediaPipeRuntime()
         const clientResult = runtime.detect(canvasRef.current, performance.now())
-        const data = await postClientLandmarks(frameId, {
-          landmarks: clientResult.landmarks,
-          has_hand: clientResult.hasHand,
-          has_pose: clientResult.hasPose,
-          client_mediapipe_ms: Number(clientResult.processMs.toFixed(1)),
-          run_model: frameId % MODEL_INFERENCE_EVERY_N_FRAMES === 0,
-        })
-        handlePredictionData(data, frameId)
-      } catch (err: any) {
-        if (err.name !== 'AbortError') {
-          console.error('Failed to run client MediaPipe:', err)
-        }
-      } finally {
+        // 1) 오버레이는 로컬 결과로 즉시 그림 → 네트워크 왕복을 안 기다려 실시간
+        const overlayCtx = landmarkCanvasRef.current?.getContext('2d')
+        if (overlayCtx) drawLandmarks(overlayCtx, clientResult.landmarks)
+        // 2) 검출/그리기는 전송을 안 기다림 → 가드 즉시 해제(다음 프레임 진행)
         isPredictingRef.current = false
+        // 3) 예측 전송은 직렬화(겹침/순서꼬임 방지)하되 그리기를 막지 않음.
+        //    응답의 랜드마크 재그리기는 생략(이미 로컬로 그림).
+        if (!clientPostInFlightRef.current) {
+          clientPostInFlightRef.current = true
+          postClientLandmarks(frameId, {
+            landmarks: clientResult.landmarks,
+            has_hand: clientResult.hasHand,
+            has_pose: clientResult.hasPose,
+            client_mediapipe_ms: Number(clientResult.processMs.toFixed(1)),
+            run_model: frameId % MODEL_INFERENCE_EVERY_N_FRAMES === 0,
+          })
+            .then((data) => handlePredictionData(data, frameId))
+            .catch((err: any) => {
+              if (err?.name !== 'AbortError') console.error('predict_landmarks failed:', err)
+            })
+            .finally(() => { clientPostInFlightRef.current = false })
+        }
+      } catch (err: any) {
+        isPredictingRef.current = false
+        if (err.name !== 'AbortError') console.error('Failed to run client MediaPipe:', err)
       }
       return
     }
@@ -1825,9 +1849,13 @@ if (!isForceScenarioDemo && pred.label && pred.confidence >= confidenceThreshold
 
   useEffect(() => {
     if (!isRunning) return
-    const interval = setInterval(captureAndSend, captureIntervalMs)
+    // 클라 모드는 브라우저에서 바로 처리(서버 왕복 없음)라 빠르게 폴링해도 됨.
+    // 60ms 고정이면 ~16fps에 묶이므로, 클라 모드만 20ms로 낮춰 30~40fps 확보.
+    // (in-flight 가드가 있어 처리보다 빨리 쌓이지 않음)
+    const intervalMs = selectedMediaPipeMode === 'client' ? 20 : captureIntervalMs
+    const interval = setInterval(captureAndSend, intervalMs)
     return () => clearInterval(interval)
-  }, [isRunning, captureAndSend, captureIntervalMs])
+  }, [isRunning, captureAndSend, captureIntervalMs, selectedMediaPipeMode])
 
   useEffect(() => {
     if (!isRunning) {

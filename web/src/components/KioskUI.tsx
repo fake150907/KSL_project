@@ -1,4 +1,5 @@
 import { Step } from './hangul'
+import SignLanguageLogo from './SignLanguageLogo'
 
 const STEP_LABELS = ['이름', '생년월일', '성별', '연락처', '정보 확인']
 const STEP_KEYS = ['name', 'dob', 'gender', 'phone', 'confirm']
@@ -46,14 +47,10 @@ export function StepBar({ current }: { current: string }) {
 
 export function Header({ step }: { step: string }) {
   return (
-    <header className="relative flex-shrink-0 flex items-center justify-between px-8 py-4 border-b border-white/[0.04]">
+    <header className="relative flex-shrink-0 flex items-center justify-between px-8 py-4 border-b border-slate-100">
       <div className="flex items-center gap-2.5">
-        <div className="w-6 h-6 rounded-lg bg-cyan-400/10 border border-cyan-400/20 flex items-center justify-center">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" strokeWidth="2.5">
-            <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-          </svg>
-        </div>
-        <span className="text-[11px] font-bold tracking-[0.18em] text-slate-600 uppercase">수어 통역 시스템</span>
+        <SignLanguageLogo className="h-7 w-7" />
+        <span className="text-[11px] font-black tracking-[0.18em] text-blue-600 uppercase">수어 통역 시스템</span>
       </div>
       <StepBar current={step} />
     </header>

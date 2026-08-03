@@ -1,0 +1,4 @@
+# Cloud Run 소스 배포 시 업로드 제외 (빌드 시 npm install로 새로 받음)
+node_modules/
+npm-debug.log
+.DS_Store

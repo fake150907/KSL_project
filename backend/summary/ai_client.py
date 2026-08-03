@@ -19,7 +19,7 @@ def summarize(conversation: list[str] | str) -> str:
     prompt = _build_prompt(conversation)
 
     try:
-        client = anthropic.Anthropic(api_key=Config.ANTHROPIC_API_KEY)
+        client = anthropic.Anthropic(api_key=Config.ANTHROPIC_API_KEY, timeout=30.0)
         message = client.messages.create(
             model=Config.ANTHROPIC_MODEL,
             max_tokens=900,

@@ -6,6 +6,7 @@ import ChatMessage from '../components/ChatMessage'
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition'
 import { registerRole, socket } from '../socket'
 import { maskName } from '../components/hangul'
+import { PEER_CONNECTION_CONFIG } from '../hooks/webrtcConfig'
 
 interface AgentDashboardProps {
   messages: ChatMessageType[]
@@ -19,21 +20,6 @@ interface AgentDashboardProps {
 }
 
 type WelfareThemeMode = 'light' | 'dark'
-
-const ICE_SERVERS: RTCIceServer[] = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-  {
-    urls: 'turn:openrelay.metered.ca:80',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
-  {
-    urls: 'turn:openrelay.metered.ca:443',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
-]
 
 const VOICE_BAR_COLORS = ['#2563EB', '#38BDF8', '#22C55E', '#F59E0B', '#6366F1', '#14B8A6']
 
@@ -102,6 +88,12 @@ export default function AgentDashboard({
   const [taskType, setTaskType] = useState('복지카드 재발급')
   const [welfareThemeMode, setWelfareThemeMode] = useState<WelfareThemeMode>('light')
 
+  // 수어 인식 결과 수정(오인식 교정) — /api/correction 으로 재학습용 라벨 기록
+  const [correctionOpen, setCorrectionOpen] = useState(false)
+  const [correctionInput, setCorrectionInput] = useState('')
+  const [correctionPredicted, setCorrectionPredicted] = useState('')
+  const [correctionStatus, setCorrectionStatus] = useState<'idle' | 'saving' | 'done' | 'error'>('idle')
+
   const isDarkMode = welfareThemeMode === 'dark'
 
   const handleSpeechMessage = useCallback((msg: ChatMessageType) => {
@@ -119,6 +111,37 @@ export default function AgentDashboard({
     () => [...messages].reverse().find((message) => message.sender === 'agent')?.text || '',
     [messages],
   )
+
+  const openCorrection = useCallback(() => {
+    setCorrectionPredicted(latestCitizenText)
+    setCorrectionInput(latestCitizenText)
+    setCorrectionStatus('idle')
+    setCorrectionOpen(true)
+  }, [latestCitizenText])
+
+  const submitCorrection = useCallback(async () => {
+    const corrected = correctionInput.trim()
+    if (!corrected) return
+    setCorrectionStatus('saving')
+    try {
+      const res = await fetch('/api/correction', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          predicted_label: correctionPredicted,
+          corrected_label: corrected,
+          corrected_by: 'agent',
+        }),
+      })
+      if (!res.ok) throw new Error('correction failed')
+      setCorrectionStatus('done')
+      setCorrectionOpen(false)
+      window.setTimeout(() => setCorrectionStatus('idle'), 2500)
+    } catch {
+      setCorrectionStatus('error')
+    }
+  }, [correctionInput, correctionPredicted])
 
   useEffect(() => {
     registerRole('agent')
@@ -152,7 +175,7 @@ export default function AgentDashboard({
   }, [onNewMessage])
 
   useEffect(() => {
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS })
+    const pc = new RTCPeerConnection(PEER_CONNECTION_CONFIG)
     peerConnectionRef.current = pc
     const pendingCandidates: RTCIceCandidateInit[] = []
     let remoteDescriptionReady = false
@@ -285,6 +308,11 @@ export default function AgentDashboard({
     stopSpeech()
     onSessionEnd()
     socket.emit('session_end')
+    // DB ended_at 업데이트
+    fetch('/api/citizen-session', {
+      method: 'DELETE',
+      credentials: 'include',
+    }).catch((err) => console.error('[citizen-session] 종료 업데이트 실패:', err))
     setSessionDone(true)
     setShowEndConfirm(false)
     navigate('/agent/launch')
@@ -421,13 +449,6 @@ export default function AgentDashboard({
           </div>
           <div className={`border-t p-4 ${isDarkMode ? 'border-[#263244]' : 'border-slate-100'}`}>
             <div className="grid gap-2">
-              <label className={`text-sm font-black ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>업무 분류</label>
-              <select value={taskType} onChange={(event) => setTaskType(event.target.value)} className={`h-11 min-w-0 rounded-lg border px-3 text-sm font-black outline-none ${isDarkMode ? 'border-[#334155] bg-[#111827] text-slate-100' : 'border-slate-200 bg-white'}`}>
-                <option>복지카드 재발급</option>
-                <option>분실 접수</option>
-                <option>본인 확인</option>
-                <option>수수료 면제</option>
-              </select>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-2">
                 <button onClick={() => addNote('처리', `${taskType} 분실 접수 진행`)} className={`whitespace-normal rounded-lg border px-3 py-2 text-sm font-black ${isDarkMode ? 'border-[#334155] text-slate-200 hover:bg-[#1e293b]' : 'border-slate-200 hover:bg-slate-50'}`}>분실 접수</button>
                 <button onClick={() => addNote('확인', '신분증 본인 확인 완료')} className={`whitespace-normal rounded-lg border px-3 py-2 text-sm font-black ${isDarkMode ? 'border-[#334155] text-slate-200 hover:bg-[#1e293b]' : 'border-slate-200 hover:bg-slate-50'}`}>본인 확인</button>
@@ -449,8 +470,52 @@ export default function AgentDashboard({
 
           <div className={`grid min-w-0 gap-3 p-4 sm:grid-cols-2 ${isDarkMode ? 'bg-[#0f172a]' : 'bg-slate-50'}`}>
             <div className={`min-h-[104px] min-w-0 rounded-lg border p-4 md:min-h-[124px] ${isDarkMode ? 'border-emerald-700/50 bg-[#121b2b]' : 'border-emerald-200 bg-white'}`}>
-              <p className={`text-sm font-black ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>민원인 발화</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className={`text-sm font-black ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>민원인 발화</p>
+                {correctionStatus === 'done' ? (
+                  <span className="shrink-0 text-xs font-bold text-emerald-500">인식 수정 저장됨 ✓</span>
+                ) : latestCitizenText && !correctionOpen ? (
+                  <button
+                    type="button"
+                    onClick={openCorrection}
+                    title="수어 인식 결과가 틀렸을 때 올바른 해석을 기록합니다 (모델 재학습용)"
+                    className={`shrink-0 rounded px-2 py-0.5 text-xs font-bold transition ${isDarkMode ? 'text-emerald-300 hover:bg-emerald-900/40' : 'text-emerald-700 hover:bg-emerald-50'}`}
+                  >
+                    ✎ 인식 수정
+                  </button>
+                ) : null}
+              </div>
               <p className={`mt-3 break-words text-base font-black leading-relaxed md:text-lg ${isDarkMode ? 'text-slate-100' : 'text-slate-950'}`}>{latestCitizenText || '민원인의 수어/문자 입력을 기다리고 있습니다.'}</p>
+              {correctionOpen && (
+                <div className="mt-3 space-y-2">
+                  <input
+                    value={correctionInput}
+                    onChange={(event) => setCorrectionInput(event.target.value)}
+                    onKeyDown={(event) => { if (event.key === 'Enter') submitCorrection() }}
+                    placeholder="올바른 수어 해석을 입력하세요"
+                    autoFocus
+                    className={`w-full rounded border px-2 py-1.5 text-sm font-semibold outline-none ${isDarkMode ? 'border-emerald-700 bg-[#0f172a] text-slate-100' : 'border-emerald-300 bg-white text-slate-900'}`}
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={submitCorrection}
+                      disabled={correctionStatus === 'saving' || !correctionInput.trim()}
+                      className="rounded bg-emerald-600 px-3 py-1 text-xs font-bold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+                    >
+                      {correctionStatus === 'saving' ? '저장 중...' : '저장'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setCorrectionOpen(false); setCorrectionStatus('idle') }}
+                      className={`rounded px-3 py-1 text-xs font-bold transition ${isDarkMode ? 'text-slate-300 hover:bg-slate-700' : 'text-slate-600 hover:bg-slate-100'}`}
+                    >
+                      취소
+                    </button>
+                    {correctionStatus === 'error' && <span className="text-xs font-bold text-red-500">저장 실패</span>}
+                  </div>
+                </div>
+              )}
             </div>
             <div className={`min-h-[104px] min-w-0 rounded-lg border p-4 md:min-h-[124px] ${isDarkMode ? 'border-blue-700/50 bg-[#121b2b]' : 'border-blue-200 bg-white'}`}>
               <p className={`text-sm font-black ${isDarkMode ? 'text-blue-400' : 'text-blue-700'}`}>상담원 응답</p>

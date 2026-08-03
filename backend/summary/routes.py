@@ -4,11 +4,13 @@ import traceback
 
 from flask import Blueprint, jsonify, request
 
+from auth.routes import login_required
 from summary.ai_client import summarize
 
 summary_bp = Blueprint("summary", __name__)
 
 @summary_bp.route("/api/summary", methods=["POST"])
+@login_required
 def create_summary():
     data = request.get_json(silent=True) or {}
     conversation = data.get("conversation", [])

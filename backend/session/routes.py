@@ -4,6 +4,7 @@ import time
 
 from flask import Blueprint, jsonify, request
 
+from auth.routes import current_branch_id, login_required
 from session.store import (
     add_message,
     clear_citizen_session,
@@ -18,13 +19,16 @@ from session.store import (
 
 session_bp = Blueprint("session", __name__)
 
+
 @session_bp.route("/api/citizen-session", methods=["GET", "POST", "DELETE"])
+@login_required
 def api_citizen_session():
+    bid = current_branch_id()
     if request.method == "GET":
-        return jsonify(get_citizen_session()), 200
+        return jsonify(get_citizen_session(branch_id=bid)), 200
 
     if request.method == "DELETE":
-        return jsonify(clear_citizen_session()), 200
+        return jsonify(clear_citizen_session(branch_id=bid)), 200
 
     data = request.get_json(silent=True) or {}
     citizen_data = data.get("citizenData") or data.get("citizen_data") or data
@@ -34,15 +38,18 @@ def api_citizen_session():
     if not str(citizen_data.get("name", "")).strip() or not str(citizen_data.get("phone", "")).strip():
         return jsonify({"error": "citizen name and phone are required"}), 400
 
-    return jsonify(set_citizen_session(citizen_data)), 200
+    return jsonify(set_citizen_session(citizen_data, branch_id=bid)), 200
+
 
 @session_bp.route("/api/messages", methods=["GET", "POST", "DELETE"])
+@login_required
 def api_messages():
+    bid = current_branch_id()
     if request.method == "GET":
-        return jsonify({"messages": get_messages()}), 200
+        return jsonify({"messages": get_messages(branch_id=bid)}), 200
 
     if request.method == "DELETE":
-        clear_messages()
+        clear_messages(branch_id=bid)
         return jsonify({"messages": []}), 200
 
     data = request.get_json(silent=True) or {}
@@ -61,19 +68,22 @@ def api_messages():
         "label": str(data.get("label", "")).strip(),
     }
 
-    result = add_message(message)
+    result = add_message(message, branch_id=bid)
     if result is None:
         return jsonify({"message": message}), 200
 
     return jsonify({"message": result}), 200
 
+
 @session_bp.route("/api/session-state", methods=["GET", "POST", "DELETE"])
+@login_required
 def api_session_state():
+    bid = current_branch_id()
     if request.method == "GET":
-        return jsonify(get_session_state()), 200
+        return jsonify(get_session_state(branch_id=bid)), 200
 
     if request.method == "DELETE":
-        return jsonify(clear_session_state()), 200
+        return jsonify(clear_session_state(branch_id=bid)), 200
 
     data = request.get_json(silent=True) or {}
-    return jsonify(set_session_ended(bool(data.get("ended")))), 200
+    return jsonify(set_session_ended(bool(data.get("ended")), branch_id=bid)), 200

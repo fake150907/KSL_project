@@ -1,6 +1,44 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+
+// ─── 전역 프론트엔드 에러 리포터 ─────────────────────────────────────────────
+/**
+ * 앱 전체에서 발생하는 JS 런타임 에러와 unhandled promise rejection을
+ * 백엔드 로그 저장소(/api/logs/frontend)로 전송합니다.
+ * 로그 뷰가 열려 있지 않아도 항상 동작합니다.
+ */
+function FrontendErrorReporter() {
+  useEffect(() => {
+    const post = (level: string, source: string, message: string) => {
+      // 로그 전송 실패는 조용히 무시 (무한루프 방지)
+      fetch('/api/logs/frontend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ level, source, message }),
+      }).catch(() => {})
+    }
+
+    const handleError = (event: ErrorEvent) => {
+      const file = event.filename?.split('/').pop() ?? ''
+      post('error', 'Frontend Error', `${event.message}${file ? ` (${file}:${event.lineno})` : ''}`)
+    }
+
+    const handleRejection = (event: PromiseRejectionEvent) => {
+      post('error', 'Frontend Promise', `Unhandled rejection: ${String(event.reason)}`)
+    }
+
+    window.addEventListener('error', handleError)
+    window.addEventListener('unhandledrejection', handleRejection)
+
+    return () => {
+      window.removeEventListener('error', handleError)
+      window.removeEventListener('unhandledrejection', handleRejection)
+    }
+  }, [])
+
+  return null
+}
 import type { ChatMessage } from './types'
 import LoginPage from './pages/LoginPage'
 import AdminHome from './pages/AdminHome'
@@ -10,11 +48,11 @@ import KakaoCallback from './pages/KakaoCallback'
 import KioskLaunchScreen from './pages/KioskLaunchScreen'
 import CitizenKiosk from './pages/CitizenKiosk'
 import { MEDIAPIPE_MODE_STORAGE_KEY, SCENARIO_MODE_STORAGE_KEY } from './hooks/useSignLanguage'
+import { setBranchId } from './socket'
 
 const CHANNEL_NAME = 'sign-lang-chat'
 const STORAGE_KEY = 'sign-lang-messages'
 const SESSION_KEY = 'sign-lang-session'
-const AUTH_KEY = 'ksl-admin-authenticated'
 
 type IncomingChatMessage = Omit<ChatMessage, 'timestamp'> & {
   timestamp: Date | string | number
@@ -28,6 +66,20 @@ function RequireAuth({ isAuthenticated, children }: { isAuthenticated: boolean; 
   }
 
   return children
+}
+
+/**
+ * 현재 로그인한 지점을 화면 구석에 표시하는 배지.
+ * 어느 동사무소(지점)에 연결돼 있는지 눈으로 확인 가능하게 한다.
+ * pointer-events-none 으로 클릭을 막지 않는다.
+ */
+function BranchBadge({ name }: { name: string }) {
+  return (
+    <div className="pointer-events-none fixed bottom-3 left-3 z-[9999] flex items-center gap-1.5 rounded-full bg-slate-900/80 px-3 py-1.5 text-xs font-medium text-white shadow-lg backdrop-blur">
+      <span aria-hidden>🏢</span>
+      <span>{name}</span>
+    </div>
+  )
 }
 
 const normalizeTimestamp = (timestamp: Date | string | number | null | undefined) => {
@@ -50,9 +102,43 @@ const serializeMessages = (items: ChatMessage[]) => JSON.stringify(items.map(ser
 export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [sessionEnded, setSessionEnded] = useState(false)
-  const [isAuthenticated, setIsAuthenticated] = useState(() => localStorage.getItem(AUTH_KEY) === 'true')
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [branchName, setBranchName] = useState<string | null>(null)
   const seenIds = useRef<Set<string>>(new Set())
   const channelRef = useRef<BroadcastChannel | null>(null)
+
+  // 서버 세션(쿠키)으로 인증을 보정 + 지점명 복원.
+  // 렌더를 막지 않으므로, 이 요청이 느리거나 실패해도 화면은 정상 동작한다.
+  useEffect(() => {
+    let cancelled = false
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 6000) // 느린 응답에 매달리지 않음
+    fetch('/api/auth/status', { credentials: 'include', signal: controller.signal })
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return
+        if (data?.authenticated) {
+          setIsAuthenticated(true)
+          setBranchId(data.branch_id ?? null)
+          setBranchName(data.branch_name ?? null)
+        } else {
+          setIsAuthenticated(false)
+          setBranchId(null)
+          setBranchName(null)
+        }
+      })
+      .catch(() => {
+        setIsAuthenticated(false)
+        setBranchId(null)
+        setBranchName(null)
+      })
+      .finally(() => clearTimeout(timer))
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [])
 
   useEffect(() => {
     const mode = new URLSearchParams(window.location.search).get('mp')
@@ -125,8 +211,9 @@ export default function App() {
     return () => channel.close()
   }, [])
 
-  const handleLogin = () => {
-    localStorage.setItem(AUTH_KEY, 'true')
+  const handleLogin = (info?: { branch_id?: string | null; branch_name?: string | null }) => {
+    setBranchId(info?.branch_id ?? null)
+    setBranchName(info?.branch_name ?? null)
     setIsAuthenticated(true)
   }
 
@@ -134,7 +221,8 @@ export default function App() {
     try {
       await fetch('/api/logout', { method: 'POST', credentials: 'include' })
     } catch {}
-    localStorage.removeItem(AUTH_KEY)
+    setBranchId(null)
+    setBranchName(null)
     setIsAuthenticated(false)
   }
 
@@ -171,6 +259,9 @@ export default function App() {
   }, [])
 
   return (
+    <>
+    <FrontendErrorReporter />
+    {isAuthenticated && branchName && <BranchBadge name={branchName} />}
     <Routes>
       <Route path="/" element={<LoginPage onLogin={handleLogin} />} />
       <Route
@@ -228,5 +319,6 @@ export default function App() {
       <Route path="/kakao/callback" element={<KakaoCallback />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </>
   )
 }

@@ -1,6 +1,5 @@
-def main():
-    print("Hello from backend!")
+"""Deprecated backend entrypoint.
 
-
-if __name__ == "__main__":
-    main()
+Run the Flask application with ``python backend/app.py`` or gunicorn instead.
+This module is intentionally side-effect free.
+"""

@@ -2,7 +2,7 @@ import { FormEvent, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
 interface LoginPageProps {
-  onLogin: () => void
+  onLogin: (info?: { branch_id?: string | null; branch_name?: string | null }) => void
 }
 
 export default function LoginPage({ onLogin }: LoginPageProps) {
@@ -34,18 +34,26 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         body: JSON.stringify({ username: cleanUsername, password: cleanPassword }),
       })
 
-      if (response.ok || (cleanUsername === 'admin' && cleanPassword === 'admin1234')) {
-        onLogin()
+      const data = await response.json().catch(() => null)
+
+      if (response.ok) {
+        // 서버가 내려준 지점 정보(branch_id)를 함께 전달 → 소켓/데이터 분리에 사용
+        onLogin(data ?? undefined)
         navigate(redirectPath, { replace: true })
         return
       }
 
-      const data = await response.json().catch(() => null)
+      if (cleanUsername === 'admin' && cleanPassword === 'admin1234') {
+        onLogin({ branch_id: null, branch_name: '관리자' })
+        navigate(redirectPath, { replace: true })
+        return
+      }
+
       setError(data?.error ?? '아이디 또는 비밀번호가 올바르지 않습니다.')
     } catch (err) {
       console.error("로그인 에러:", err)
       if (cleanUsername === 'admin' && cleanPassword === 'admin1234') {
-        onLogin()
+        onLogin({ branch_id: null, branch_name: '관리자' })
         navigate(redirectPath, { replace: true })
         return
       }

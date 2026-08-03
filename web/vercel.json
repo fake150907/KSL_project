@@ -1,0 +1,20 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "http://34.158.217.119:8080/api/:path*"
+    },
+    {
+      "source": "/video_feed",
+      "destination": "http://34.158.217.119:8080/video_feed"
+    },
+    {
+      "source": "/validation_demos/:path*",
+      "destination": "http://34.158.217.119:8080/validation_demos/:path*"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}

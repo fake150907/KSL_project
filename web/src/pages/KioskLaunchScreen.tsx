@@ -4,7 +4,7 @@ import type { CitizenData, Step } from '../components/hangul'
 import { socket, registerRole } from '../socket'
 
 import {
-  StepStart, StepName, StepDob, StepGender,
+  StepStart, StepConsent, StepPrivacyPolicy, StepName, StepDob, StepGender,
   StepPhone, StepConfirm, StepWaiting
 } from '../components/KioskSteps'
 
@@ -62,6 +62,8 @@ export default function KioskLaunchScreen() {
   const renderStep = () => {
     switch (step) {
       case 'start':   return <StepStart go={go} />
+      case 'consent': return <StepConsent go={go} />
+      case 'policy':  return <StepPrivacyPolicy go={go} />
       case 'name':    return <StepName data={data} setData={setData} go={go} />
       case 'dob':     return <StepDob data={data} setData={setData} go={go} />
       case 'gender':  return <StepGender data={data} setData={setData} go={go} />
